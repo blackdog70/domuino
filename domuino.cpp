@@ -7,16 +7,18 @@
 
 #include "domuino.h"
 
-timeout dht_timeout;
-timeout pir_timeout;
-timeout lux_timeout;
-timeout ems_timeout;
+Timeout timeout[5];
 
 void setup()
 {
+	/* INIT LCD */
+	lcd.begin();
+	lcd.clear();
+
 	/* INIT BUS */
 	Serial.begin(19200);
 	pinMode(BUS_ENABLE, OUTPUT);
+	hub_node = 1;	// Set to default hub
 
 	/* INIT IO PINS */
 	pinMode(DHT_PIN, INPUT);
@@ -26,12 +28,14 @@ void setup()
 
 	/* INITIAL SENSOR STATE */
 	pir_state = LOW;
-//
+
 //	/* INIT TIMEOUT */
-//	pir_timeout.value = PIR_TIMEOUT;
-//	lux_timeout.value = LUX_TIMEOUT;
-//	dht_timeout.value = DHT_TIMEOUT;
-//
+	timeout[0].code = C_HBT;
+	timeout[1].code = C_LUX;
+	timeout[2].code = C_PIR;
+	timeout[3].code = C_DHT;
+	timeout[4].code = C_EMS;
+
 //	/* INIT SENSORS CHANNELS */
 //	node.channel(update_pir, &pir_timeout);
 //	node.channel(update_lux, &lux_timeout);
@@ -41,6 +45,35 @@ void setup()
 void loop()
 {
 	Packet packet;
+
+	struct Payload_dht {
+					uint16_t temperature;
+					uint16_t humidity;
+				} dht;
+	dht.temperature = dht_sensor.getTemperature();
+	dht.humidity = dht_sensor.getHumidity();
+	lcd.setCursor(0, 0);
+	lcd.setFontSize(FONT_SIZE_SMALL);
+	lcd.print("    22/01/17 09:57");
+	lcd.setCursor(0, 2);
+	lcd.setFontSize(FONT_SIZE_MEDIUM);
+	lcd.print("TEMP");
+	lcd.setCursor(55, 2);
+	lcd.setFontSize(FONT_SIZE_XLARGE);
+	lcd.printFloat(dht.temperature / 10.0);
+	lcd.setFontSize(FONT_SIZE_MEDIUM);
+	lcd.setCursor(115, 3);
+	lcd.print('C');
+	lcd.setCursor(0, 5);
+	lcd.setFontSize(FONT_SIZE_MEDIUM);
+	lcd.print("HUM");
+	lcd.setCursor(55, 5);
+	lcd.setFontSize(FONT_SIZE_XLARGE);
+	lcd.printFloat(dht.humidity / 10.0);
+	lcd.setCursor(115, 6);
+	lcd.setFontSize(FONT_SIZE_MEDIUM);
+	lcd.print('%');
+	delay(2000);
 
 	if(read(&packet)) {
 //		Serial.print("Source=");
@@ -63,69 +96,98 @@ void loop()
 			 * direction change
 			 */
 			delay(10);
-			packet.source = NODE_ID;
-			packet.dest = 1;
-			memset(packet.payload.data, 0, sizeof(packet.payload.data));
 			switch(packet.payload.code) {
 				case C_CONFIG: {
 					switch(packet.payload.data[0]) {
+						case C_HBT:
+							timeout[0].value = packet.payload.data[1] * 1000UL;
 						case C_LUX:
-							lux_timeout.value = packet.payload.data[1] * 1000UL;
+							timeout[1].value = packet.payload.data[1] * 1000UL;
 						case C_PIR:
-							pir_timeout.value = packet.payload.data[1] * 1000UL;
+							timeout[2].value = packet.payload.data[1] * 1000UL;
 						case C_DHT:
-							dht_timeout.value = packet.payload.data[1] * 1000UL;
+							timeout[3].value = packet.payload.data[1] * 1000UL;
 						case C_EMS:
-							ems_timeout.value = packet.payload.data[1] * 1000UL;
+							timeout[4].value = packet.payload.data[1] * 1000UL;
 					}
 					break;
 				}
-				case C_MEM: {
-					int free = freeMemory();
-					memcpy(packet.payload.data, &free, sizeof(int));
+				case C_RESET: {
+					start_bootloader();
 					break;
 				}
-				case C_LUX: {
-					int lux = analogRead(LUX_IN);
-					memcpy(packet.payload.data, &lux, sizeof(int));
-					break;
-				}
-				case C_PIR: {
-					int pir = digitalRead(PIR_IN);
-					memcpy(packet.payload.data, &pir, sizeof(int));
-					break;
-				}
-				case C_DHT: {
-					struct Payload_dht {
-						uint16_t temperature;
-						uint16_t humidity;
-					} dht;
-					dht.temperature = dht_sensor.getTemperature();
-					dht.humidity = dht_sensor.getHumidity();
-					memcpy(packet.payload.data, &dht, sizeof(Payload_dht));
-					break;
-				}
-				case C_EMS: {
-					struct Payload_ems {
-						double value[NUM_EMS];
-					} ems;
-					for(uint8_t i = 0; i < NUM_EMS; i++) {
-						double power = energy[i].calcIrms(1480) * EMON_VOLTAGE;
-
-						if (power == NAN) {
-							power = -1.0;
-						} else if (power <= 600.0) {
-							power *= 0.95;
-						}
-						ems.value[i] = power;
-					}
-					memcpy(packet.payload.data, &ems, sizeof(Payload_ems));
-					break;
-				}
+				default:
+					prepare_packet(packet.payload.code, &packet);
 			}
 			write(&packet);
 		}
+	} else {
+		for (uint8_t i = 0; i < (sizeof(timeout) / sizeof(Timeout)); i++) {
+			if ((timeout[i].code) &&
+					(timeout[i].value) &&
+					((millis() - timeout[i].timer) > timeout[i].value)) {
+				if(prepare_packet(timeout[i].code, &packet) &&
+						(push(&packet) || (timeout[i].retry++ > MAX_PUSH_RETRY))) {
+					timeout[i].timer = millis();
+					timeout[i].retry = 0;
+				}
+			}
+		}
 	}
+}
+
+uint8_t prepare_packet(uint8_t code, Packet *packet) {
+	packet->source = NODE_ID;
+	packet->dest = hub_node;
+	packet->payload.code = code;
+	memset(packet->payload.data, 0, sizeof(packet->payload.data));
+	switch(code) {
+		case C_MEM: {
+			int free = freeMemory();
+			memcpy(packet->payload.data, &free, sizeof(int));
+			break;
+		}
+		case C_LUX: {
+			int lux = analogRead(LUX_IN);
+			memcpy(packet->payload.data, &lux, sizeof(int));
+			break;
+		}
+		case C_PIR: {
+			int pir = digitalRead(PIR_IN);
+			memcpy(packet->payload.data, &pir, sizeof(int));
+			break;
+		}
+		case C_DHT: {
+			struct Payload_dht {
+				uint16_t temperature;
+				uint16_t humidity;
+			} dht;
+			dht.temperature = dht_sensor.getTemperature();
+			dht.humidity = dht_sensor.getHumidity();
+			memcpy(packet->payload.data, &dht, sizeof(Payload_dht));
+			break;
+		}
+		case C_EMS: {
+			struct Payload_ems {
+				double value[NUM_EMS];
+			} ems;
+			for(uint8_t i = 0; i < NUM_EMS; i++) {
+				double power = energy[i].calcIrms(1480) * EMON_VOLTAGE;
+
+				if (power == NAN) {
+					power = -1.0;
+				} else if (power <= 600.0) {
+					power *= 0.95;
+				}
+				ems.value[i] = power;
+			}
+			memcpy(packet->payload.data, &ems, sizeof(Payload_ems));
+			break;
+		}
+		default:
+			return 0;
+	}
+	return 1;
 }
 
 void start_bootloader()
@@ -141,22 +203,20 @@ void flushinputbuffer() {
 		Serial.read();
 }
 
-void push(const char dest, Payload *payload) {
-	Packet packet;
+uint8_t push(Packet *packet) {
 	unsigned long timeout;
 
-	packet.source = NODE_ID;
-	packet.dest = dest;
-	memcpy((uint8_t*)&packet.payload, (uint8_t*)payload, sizeof(Payload));
-	write(&packet);
+	write(packet);
 	timeout = millis();
-	while(!read(&packet) && (millis() - timeout) < PACKET_TIMEOUT);
-	if(packet.dest == NODE_ID) {
+	while(!read(packet) && (millis() - timeout) < PACKET_TIMEOUT);
+	if(packet->dest == NODE_ID) {
 		/* TODO: da completare con interprete pacchetto */
-		flushinputbuffer();
 	} else {
 		delay(PACKET_TIMEOUT);
+		flushinputbuffer();
+		return 0;
 	}
+	return 1;
 }
 
 uint8_t write(Packet* pkt) {

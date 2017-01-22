@@ -11,12 +11,19 @@
 #include "Arduino.h"
 //#include "settings.h"
 #include <avr/wdt.h>
-#include "crc16.h"
-#include "EEPROM.h"
-#include "FreeMemory.h"
-#include "EmonLib.h"
+#include <crc16.h>
+#include <EEPROM.h>
+#include <FreeMemory.h>
+#include <EmonLib.h>
+#include "ADCTouch.h"
 //#include <Domuino.h>
+#include <MicroLCD.h>
 #include <DHT.h>
+
+/*
+ * LCD settings
+ */
+LCD_SSD1306 lcd; /* for SSD1306 OLED module */
 
 /*
  * Communication settings
@@ -40,6 +47,7 @@ struct Packet {
 #define PACKET_TIMEOUT 100UL 	// milliseconds
 #define NUM_PACKET 1
 #define MAX_BUFFER_SIZE (NUM_PACKET * (sizeof(Packet) + 5)) // 5 = 2 bytes header, 1 byte size, 2 bytes CRC
+#define MAX_PUSH_RETRY 3
 
 /*
  * Commands settings
@@ -69,15 +77,17 @@ struct Packet {
  */
 #define DHT_PIN 9
 #define PIR_IN 10
-#define LUX_IN A1
+#define LUX_IN PIN_A1
 
 /*
  * Timing settings in milliseconds
  */
-struct timeout {
+struct Timeout {
+	uint8_t code;
+	uint8_t retry;
 	unsigned long timer;
 	unsigned long value;
-	timeout():timer(millis()), value(0) {};
+	Timeout():code(0), retry(0), timer(millis()), value(0) {};
 };
 
 #define DHT_TIMEOUT 2000UL
@@ -97,9 +107,11 @@ EnergyMonitor energy[NUM_EMS];
 DHT dht_sensor;
 
 int pir_state;
+uint8_t hub_node;
 
+uint8_t prepare_packet(uint8_t code, Packet *packet);
 void start_bootloader();
-void push(const char dest, Payload *payload);
+uint8_t push(Packet *packet);
 void flushinputbuffer();
 uint8_t read(Packet* packet);
 uint8_t write(Packet* pkt);
