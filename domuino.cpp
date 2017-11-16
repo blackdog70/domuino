@@ -7,18 +7,36 @@
 
 #include "domuino.h"
 
-Timeout timeout[5];
+Timeout push_timeout[6];
+int info_type = 0;
+uint8_t running = 0;
+
+#define NUMTIMEOUT (sizeof(push_timeout) / sizeof(Timeout))
 
 void setup()
 {
-	/* INIT LCD */
-	lcd.begin();
-	lcd.clear();
-
 	/* INIT BUS */
 	Serial.begin(19200);
+	Serial.println("START");
 	pinMode(BUS_ENABLE, OUTPUT);
 	hub_node = 1;	// Set to default hub
+
+	/* INIT LCD */
+	oled.begin(&Adafruit128x64, I2C_ADDRESS, false);
+
+/*  PRIMA DI RIABILITARE LA VISUALIZZAZIONE DEL LOGO
+ *  CONSIDERARE CHE E' STATO DISATTIVATO PER EVITARE PROBLEMI
+ *  CON LA VISUALIZZAZIONE DELLE STRINGHE ALTE 3 BYTES
+ *  I PROBLEMI ERANO DIVERSI AD OGNI PROGRAMMAZIONE A SEGUITO DI MODIFICHE AL CODICE
+ *  APPARENTEMENTE INSIGNIFICNTI, ES AGGIUNGENDO O TOGLIENDO UN INCREMENTO DI UNA VARIABILE
+ *  E NON SONO RIUSCITO A CAPIRE SE IL PROBLEMA E' DOVUTO AL SOFTWARE O ALLA FLASH DEL
+ *  CHIP CHE PER QUALCHE MOTIVO NON SI PROGRAMMA CORRETTAMENTE (NON HO
+ *  ESEGUITO IL VERIFY DEL DOWNLOAD), IN EFFETTI RESTANDO AL DI SOTTO DI UNA CERTA
+ *  SIZE DEL CODICE IL PROBLEMA NON SI VERIFICA
+ */
+//	oledDraw(32, 0, (uint8_t*)hass64x64);
+//	delay(3000);
+	oled.clear();
 
 	/* INIT IO PINS */
 	pinMode(DHT_PIN, INPUT);
@@ -29,53 +47,30 @@ void setup()
 	/* INITIAL SENSOR STATE */
 	pir_state = LOW;
 
-//	/* INIT TIMEOUT */
-	timeout[0].code = C_HBT;
-	timeout[1].code = C_LUX;
-	timeout[2].code = C_PIR;
-	timeout[3].code = C_DHT;
-	timeout[4].code = C_EMS;
+	/* INIT TOUCH */
+	for(uint8_t i=0; i < NUMTOUCH; i++)
+		calibrate_touch(i);
 
-//	/* INIT SENSORS CHANNELS */
-//	node.channel(update_pir, &pir_timeout);
-//	node.channel(update_lux, &lux_timeout);
-//	node.channel(update_dht, &dht_timeout);
+//	/* INIT TIMEOUT */
+	push_timeout[0].code = C_HBT;
+//	push_timeout[0].value = 2;
+	push_timeout[1].code = C_LUX;
+//	push_timeout[1].value = 30000;
+	push_timeout[2].code = C_PIR;
+//	push_timeout[2].value = 1;
+	push_timeout[3].code = C_DHT;
+	push_timeout[3].value = 10000;
+	push_timeout[4].code = C_EMS;
+//	push_timeout[4].value = 1;
+	push_timeout[5].code = C_SWITCH;
+//	push_timeout[5].value = 1000;
 }
 
 void loop()
 {
 	Packet packet;
 
-	struct Payload_dht {
-					uint16_t temperature;
-					uint16_t humidity;
-				} dht;
-	dht.temperature = dht_sensor.getTemperature();
-	dht.humidity = dht_sensor.getHumidity();
-	lcd.setCursor(0, 0);
-	lcd.setFontSize(FONT_SIZE_SMALL);
-	lcd.print("    22/01/17 09:57");
-	lcd.setCursor(0, 2);
-	lcd.setFontSize(FONT_SIZE_MEDIUM);
-	lcd.print("TEMP");
-	lcd.setCursor(55, 2);
-	lcd.setFontSize(FONT_SIZE_XLARGE);
-	lcd.printFloat(dht.temperature / 10.0);
-	lcd.setFontSize(FONT_SIZE_MEDIUM);
-	lcd.setCursor(115, 3);
-	lcd.print('C');
-	lcd.setCursor(0, 5);
-	lcd.setFontSize(FONT_SIZE_MEDIUM);
-	lcd.print("HUM");
-	lcd.setCursor(55, 5);
-	lcd.setFontSize(FONT_SIZE_XLARGE);
-	lcd.printFloat(dht.humidity / 10.0);
-	lcd.setCursor(115, 6);
-	lcd.setFontSize(FONT_SIZE_MEDIUM);
-	lcd.print('%');
-	delay(2000);
-
-	if(read(&packet)) {
+	if(receive(&packet)) {
 //		Serial.print("Source=");
 //		Serial.println(packet.source);
 //		Serial.print("Dest=");
@@ -83,7 +78,7 @@ void loop()
 //		Serial.print("Code=");
 //		Serial.println(packet.payload.code, HEX);
 //		Serial.print("Data=");
-//		Serial.write((const char *)packet.payload.data, 10);
+//		Serial.write((const char *)packet.payload.data, sizeof(packet.payload.data));
 		if (packet.dest != NODE_ID) {
 			/* If packet is not for this node wait for the same time of
 			 * a packet timeout, this will give the time to complete the
@@ -100,15 +95,17 @@ void loop()
 				case C_CONFIG: {
 					switch(packet.payload.data[0]) {
 						case C_HBT:
-							timeout[0].value = packet.payload.data[1] * 1000UL;
+							push_timeout[0].value = packet.payload.data[1] * 1000UL;
 						case C_LUX:
-							timeout[1].value = packet.payload.data[1] * 1000UL;
+							push_timeout[1].value = packet.payload.data[1] * 1000UL;
 						case C_PIR:
-							timeout[2].value = packet.payload.data[1] * 1000UL;
+							push_timeout[2].value = packet.payload.data[1] * 1000UL;
 						case C_DHT:
-							timeout[3].value = packet.payload.data[1] * 1000UL;
+							push_timeout[3].value = packet.payload.data[1] * 1000UL;
 						case C_EMS:
-							timeout[4].value = packet.payload.data[1] * 1000UL;
+							push_timeout[4].value = packet.payload.data[1] * 1000UL;
+						case C_SWITCH:
+							push_timeout[4].value = packet.payload.data[1] * 1000UL;
 					}
 					break;
 				}
@@ -119,21 +116,108 @@ void loop()
 				default:
 					prepare_packet(packet.payload.code, &packet);
 			}
-			write(&packet);
+			send(&packet);
 		}
 	} else {
-		for (uint8_t i = 0; i < (sizeof(timeout) / sizeof(Timeout)); i++) {
-			if ((timeout[i].code) &&
-					(timeout[i].value) &&
-					((millis() - timeout[i].timer) > timeout[i].value)) {
-				if(prepare_packet(timeout[i].code, &packet) &&
-						(push(&packet) || (timeout[i].retry++ > MAX_PUSH_RETRY))) {
-					timeout[i].timer = millis();
-					timeout[i].retry = 0;
+		for (uint8_t i = 0; i < NUMTIMEOUT; i++) {
+			if ((push_timeout[i].code) &&
+					(push_timeout[i].value) &&
+					((millis() - push_timeout[i].timer) > push_timeout[i].value)) {
+				if(prepare_packet(push_timeout[i].code, &packet) &&
+						(push(&packet) || (push_timeout[i].retry++ > MAX_PUSH_RETRY))) {
+					push_timeout[i].timer = millis();
+					push_timeout[i].retry = 0;
 				}
 			}
 		}
 	}
+	display_info();
+}
+
+void display_info()
+{
+	char tmp[20];
+
+	oled.setFont(font5x7);
+	oled.setCursor(40, 0);
+	if(running)
+		oled.print(".DOMUINO.");
+	else
+		oled.print(" DOMUINO ");
+	running = 1 - running;
+
+	oled.setCursor(5,  3);
+	oled.print("TEMP");
+	oled.setCursor(119,  3);
+	oled.print("C");
+	oled.setCursor(5,  6);
+	oled.print("HUM");
+	oled.setCursor(119,  6);
+	oled.print("%");
+	oled.setFont(lcdnums14x24);
+	oled.setCursor(40,  2);
+	oled.print(dht_state.temperature / 10.0);
+	oled.setCursor(40,  5);
+	oled.print(dht_state.humidity / 10.0);
+
+
+//	if (touch[0].state) {
+//		if(++info_type > 2)
+//			info_type = 0;
+//		clearScr();
+//	} else if (touch[1].state) {
+//		if(--info_type < 0)
+//			info_type = 2;
+//		clearScr();
+//	}
+//
+//	current_font = (uint8_t*)SmallFont;
+//	if(running)
+//		oledWriteString(40, 0, ".DOMUINO.");
+//	else
+//		oledWriteString(40, 0, " DOMUINO ");
+//	running = 1 - running;
+//
+//	switch (info_type) {
+//		case 0:
+//			oledWriteString(5, 3, "TEMP");
+//			oledWriteString(119, 3, "C");
+//			oledWriteString(5, 6, "HUM");
+//			oledWriteString(119, 6, "%");
+////			current_font = (uint8_t*)digits14x24;
+////			dtostrf(dht_state.temperature / 10.0, 5, 1, tmp);
+//			oledWriteString(40, 2, "41.2");
+////			dtostrf(dht_state.humidity / 10.0, 5, 1, tmp);
+//			oledWriteString(40, 5, "60.3");
+//			break;
+//		case 1: {
+//			oledWriteString(0, 3, "LUX");
+//			current_font = (uint8_t*)digits14x24;
+//			dtostrf(lux_state, 4, 0, tmp);
+//			oledWriteString(40, 2, tmp);
+//			break;
+//		}
+//		case 2:
+//			oledWriteString(0, 3, "PIR");
+//			current_font = (uint8_t*)digits14x24;
+//			dtostrf(pir_state, 2, 0 , tmp);
+//			oledWriteString(40, 2, tmp);
+//			break;
+//		case 3:
+////			oledWriteString(0, 2, "Touch");
+////			current_font = (uint8_t*)digits14x24;
+////			for (int i=0; i < NUMTOUCH; i++) {
+////				sprintf(tmp, "%i\0", touch[i].state);
+////				oledWriteString(30 + (16 * i), 2, tmp);
+////			}
+//			break;
+//		default:
+//			break;
+//	}
+}
+
+void calibrate_touch(int i) {
+    touch[i].base_value = touch_sensor.readRaw(TOUCH_PIN + i, TOUCHSAMPLES);    //create reference for off state
 }
 
 uint8_t prepare_packet(uint8_t code, Packet *packet) {
@@ -144,33 +228,34 @@ uint8_t prepare_packet(uint8_t code, Packet *packet) {
 	switch(code) {
 		case C_MEM: {
 			int free = freeMemory();
+
 			memcpy(packet->payload.data, &free, sizeof(int));
 			break;
 		}
 		case C_LUX: {
-			int lux = analogRead(LUX_IN);
-			memcpy(packet->payload.data, &lux, sizeof(int));
+			lux_state = analogRead(LUX_IN);
+
+			memcpy(packet->payload.data, &lux_state, sizeof(lux_state));
 			break;
 		}
 		case C_PIR: {
-			int pir = digitalRead(PIR_IN);
-			memcpy(packet->payload.data, &pir, sizeof(int));
+			int new_state = digitalRead(PIR_IN);
+
+			if (new_state == pir_state)
+				return 0;
+
+			pir_state = new_state;
+			memcpy(packet->payload.data, &pir_state, sizeof(pir_state));
 			break;
 		}
 		case C_DHT: {
-			struct Payload_dht {
-				uint16_t temperature;
-				uint16_t humidity;
-			} dht;
-			dht.temperature = dht_sensor.getTemperature();
-			dht.humidity = dht_sensor.getHumidity();
-			memcpy(packet->payload.data, &dht, sizeof(Payload_dht));
+			dht_state.temperature = dht_sensor.getTemperature();
+			dht_state.humidity = dht_sensor.getHumidity();
+
+			memcpy(packet->payload.data, &dht_state, sizeof(Payload_dht));
 			break;
 		}
 		case C_EMS: {
-			struct Payload_ems {
-				double value[NUM_EMS];
-			} ems;
 			for(uint8_t i = 0; i < NUM_EMS; i++) {
 				double power = energy[i].calcIrms(1480) * EMON_VOLTAGE;
 
@@ -179,9 +264,31 @@ uint8_t prepare_packet(uint8_t code, Packet *packet) {
 				} else if (power <= 600.0) {
 					power *= 0.95;
 				}
-				ems.value[i] = power;
+				ems_state.value[i] = power;
 			}
-			memcpy(packet->payload.data, &ems, sizeof(Payload_ems));
+
+			memcpy(packet->payload.data, &ems_state, sizeof(Payload_ems));
+			break;
+		}
+		case C_SWITCH: {
+			uint8_t touched = 0;
+			uint8_t switches[6] = {0, 0, 0 ,0 ,0, 0};
+
+			for(uint8_t i=0; i < NUMTOUCH; i++) {
+				touch[i].value = touch_sensor.readRaw(TOUCH_PIN + i, TOUCHSAMPLES);  // get touch value
+				touch[i].value -= touch[i].base_value;      	// subtract the state when off
+				if (touch[i].value < 0)
+					calibrate_touch(i);
+
+				if (touch[i].value > TOUCHREF) {
+					touch[i].state = 1 - touch[i].state;
+					touched = 1;
+				}
+				switches[i] = touch[i].state;
+			}
+			if (!touched)
+				return 0;
+			memcpy(packet->payload.data, &switches, sizeof(switches));
 			break;
 		}
 		default:
@@ -192,10 +299,22 @@ uint8_t prepare_packet(uint8_t code, Packet *packet) {
 
 void start_bootloader()
 {
-	EEPROM.write(0, 0); // Set start bootloader
-	wdt_reset();
-	wdt_enable(WDTO_15MS);
-	exit (1);  			// loop forever
+	MCUSR = 0;
+
+	typedef void (*do_reboot_t)(void);
+//	const do_reboot_t do_reboot = (do_reboot_t)((FLASHEND-511)>>1);
+	//const do_reboot_t do_reboot = (do_reboot_t)(0x3D00>>1);
+
+	for(uint8_t i=0; i < 7; i++) {
+		digitalWrite(BUS_ENABLE, HIGH);
+		delay(200);
+		digitalWrite(BUS_ENABLE, LOW);
+		delay(50);
+	}
+	cli();
+	noInterrupts();
+	asm volatile ("ijmp" ::"z" (0x3D00));
+	//do_reboot();
 }
 
 void flushinputbuffer() {
@@ -206,9 +325,9 @@ void flushinputbuffer() {
 uint8_t push(Packet *packet) {
 	unsigned long timeout;
 
-	write(packet);
+	send(packet);
 	timeout = millis();
-	while(!read(packet) && (millis() - timeout) < PACKET_TIMEOUT);
+	while(!receive(packet) && (millis() - timeout) < PACKET_TIMEOUT);
 	if(packet->dest == NODE_ID) {
 		/* TODO: da completare con interprete pacchetto */
 	} else {
@@ -219,7 +338,7 @@ uint8_t push(Packet *packet) {
 	return 1;
 }
 
-uint8_t write(Packet* pkt) {
+uint8_t send(Packet* pkt) {
 	if(Serial.availableForWrite() < (int)sizeof(pkt->payload.data)) {
 		Serial.print("Full buffer");
 		return 0;
@@ -247,7 +366,7 @@ uint8_t write(Packet* pkt) {
 	return 1;
 }
 
-uint8_t read(Packet* packet) {
+uint8_t receive(Packet* packet) {
 	int ch;
 	char buffer[MAX_BUFFER_SIZE];
 
