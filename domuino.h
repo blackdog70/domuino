@@ -15,21 +15,27 @@
 #include <EEPROM.h>
 #include <FreeMemory.h>
 #include <EmonLib.h>
-#include "ADCTouch.h"
 //#include <Domuino.h>
-#include <MicroLCD.h>
+//#include <simpleoled.h>
 #include <DHT.h>
+#include <Wire.h>
+#include <SSD1306Ascii.h>
+#include <SSD1306AsciiAvrI2c.h>
+
+/* MAIN settings */
+#define SERIAL pgm_read_word_near(0x7ffd);
 
 /*
  * LCD settings
  */
-LCD_SSD1306 lcd; /* for SSD1306 OLED module */
+#define I2C_ADDRESS 0x3C
+SSD1306AsciiAvrI2c oled;
 
 /*
  * Communication settings
  */
 
-#define MAX_DATA_SIZE 10
+#define MAX_DATA_SIZE 12
 
 struct Payload {
     uint8_t code;
@@ -37,12 +43,11 @@ struct Payload {
 };
 
 struct Packet {
-	uint8_t source;
-	uint8_t dest;
+	uint16_t source;
+	uint16_t dest;
     Payload payload;
 };
 
-#define NODE_ID 2
 #define BUS_ENABLE 2
 #define PACKET_TIMEOUT 100UL 	// milliseconds
 #define NUM_PACKET 1
@@ -57,27 +62,20 @@ struct Packet {
 #define COMMAND_PATTERN  0x80
 // SYSTEM
 #define C_START 		0x80
-#define C_PING 		0x81
+#define C_PING 			0x81
 #define C_RESET 		0x82
 #define C_CONFIG 		0x88
-#define C_HUB 		0x89
-#define C_MEM 		0x90
-#define C_HBT 		0x9f
+#define C_HUB 			0x89
+#define C_MEM 			0x90
+#define C_HBT 			0x9f
 // DEVICE
-#define C_DHT 		0xA0
-#define C_EMS 		0xA1
+#define C_DHT 			0xA0
+#define C_EMS 			0xA1
 #define C_BINARY_OUT 	0xA2
 #define C_SWITCH 		0xA3
 #define C_LIGHT 		0xA4
-#define C_PIR 		0xA5
-#define C_LUX 		0xA6
-
-/*
- * IO settings
- */
-#define DHT_PIN 9
-#define PIR_IN 10
-#define LUX_IN PIN_A1
+#define C_PIR 			0xA5
+#define C_LUX 			0xA6
 
 /*
  * Timing settings in milliseconds
@@ -97,23 +95,55 @@ struct Timeout {
 #define HB_TIMING 10000UL  // heartbeat
 
 /*
- * Emon settings
+ * EMON settings
  */
 #define EMON_CURRENT 20.73
 #define EMON_VOLTAGE 229.0
 #define NUM_EMS 2
-
+struct Payload_ems {
+	double value[NUM_EMS];
+} ems_state;
 EnergyMonitor energy[NUM_EMS];
+
+/*
+ * DHT settings
+ */
+#define DHT_PIN 13
+struct Payload_dht {
+	int16_t temperature;
+	int16_t humidity;
+} dht_state;
 DHT dht_sensor;
 
+/*
+ * PIR settings
+ */
+#define PIR_IN 12
 int pir_state;
-uint8_t hub_node;
 
+/*
+ * LUX settings
+ */
+#define LUX_IN PIN_A1
+int lux_state;
+
+/*
+ * TOUCH settings
+ */
+#define NUMTOUCH 2
+#define TOUCH_PIN 3 // Base pin, others will be Base+1, Base+2 and so on
+
+uint16_t hub_node;
+
+// void calibrate_touch(int i);
+uint16_t get_id();
+uint8_t refresh_sensor(uint8_t code);
 uint8_t prepare_packet(uint8_t code, Packet *packet);
+void display_info();
 void start_bootloader();
 uint8_t push(Packet *packet);
 void flushinputbuffer();
-uint8_t read(Packet* packet);
-uint8_t write(Packet* pkt);
+uint8_t receive(Packet* packet);
+uint8_t send(Packet* pkt);
 
 #endif /* DOMUINO_H_ */

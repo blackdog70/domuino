@@ -9,6 +9,7 @@
 
 Timeout push_timeout[6];
 int info_type = 0;
+uint16_t node_id;
 uint8_t running = 0;
 
 #define NUMTIMEOUT (sizeof(push_timeout) / sizeof(Timeout))
@@ -17,7 +18,6 @@ void setup()
 {
 	/* INIT BUS */
 	Serial.begin(19200);
-	Serial.println("START");
 	pinMode(BUS_ENABLE, OUTPUT);
 	hub_node = 1;	// Set to default hub
 
@@ -28,7 +28,7 @@ void setup()
  *  CONSIDERARE CHE E' STATO DISATTIVATO PER EVITARE PROBLEMI
  *  CON LA VISUALIZZAZIONE DELLE STRINGHE ALTE 3 BYTES
  *  I PROBLEMI ERANO DIVERSI AD OGNI PROGRAMMAZIONE A SEGUITO DI MODIFICHE AL CODICE
- *  APPARENTEMENTE INSIGNIFICNTI, ES AGGIUNGENDO O TOGLIENDO UN INCREMENTO DI UNA VARIABILE
+ *  APPARENTEMENTE INSIGNIFICANTI, ES AGGIUNGENDO O TOGLIENDO UN INCREMENTO DI UNA VARIABILE
  *  E NON SONO RIUSCITO A CAPIRE SE IL PROBLEMA E' DOVUTO AL SOFTWARE O ALLA FLASH DEL
  *  CHIP CHE PER QUALCHE MOTIVO NON SI PROGRAMMA CORRETTAMENTE (NON HO
  *  ESEGUITO IL VERIFY DEL DOWNLOAD), IN EFFETTI RESTANDO AL DI SOTTO DI UNA CERTA
@@ -48,8 +48,8 @@ void setup()
 	pir_state = LOW;
 
 	/* INIT TOUCH */
-	for(uint8_t i=0; i < NUMTOUCH; i++)
-		calibrate_touch(i);
+//	for(uint8_t i=0; i < NUMTOUCH; i++)
+//		calibrate_touch(i);
 
 //	/* INIT TIMEOUT */
 	push_timeout[0].code = C_HBT;
@@ -64,6 +64,15 @@ void setup()
 //	push_timeout[4].value = 1;
 	push_timeout[5].code = C_SWITCH;
 //	push_timeout[5].value = 1000;
+
+	/* READ NODE ID FROM FLASH */
+	node_id = get_id();
+
+	/* SEND START */
+	Packet packet;
+
+	prepare_packet(C_START, &packet);
+	push(&packet);
 }
 
 void loop()
@@ -79,7 +88,7 @@ void loop()
 //		Serial.println(packet.payload.code, HEX);
 //		Serial.print("Data=");
 //		Serial.write((const char *)packet.payload.data, sizeof(packet.payload.data));
-		if (packet.dest != NODE_ID) {
+		if (packet.dest != node_id) {
 			/* If packet is not for this node wait for the same time of
 			 * a packet timeout, this will give the time to complete the
 			 * current transaction between the strangers nodes
@@ -216,12 +225,12 @@ void display_info()
 //	}
 }
 
-void calibrate_touch(int i) {
-    touch[i].base_value = touch_sensor.readRaw(TOUCH_PIN + i, TOUCHSAMPLES);    //create reference for off state
-}
+//void calibrate_touch(int i) {
+//    touch[i].base_value = touch_sensor.readRaw(TOUCH_PIN + i, TOUCHSAMPLES);    //create reference for off state
+//}
 
 uint8_t prepare_packet(uint8_t code, Packet *packet) {
-	packet->source = NODE_ID;
+	packet->source = node_id;
 	packet->dest = hub_node;
 	packet->payload.code = code;
 	memset(packet->payload.data, 0, sizeof(packet->payload.data));
@@ -271,26 +280,17 @@ uint8_t prepare_packet(uint8_t code, Packet *packet) {
 			break;
 		}
 		case C_SWITCH: {
-			uint8_t touched = 0;
 			uint8_t switches[6] = {0, 0, 0 ,0 ,0, 0};
 
-			for(uint8_t i=0; i < NUMTOUCH; i++) {
-				touch[i].value = touch_sensor.readRaw(TOUCH_PIN + i, TOUCHSAMPLES);  // get touch value
-				touch[i].value -= touch[i].base_value;      	// subtract the state when off
-				if (touch[i].value < 0)
-					calibrate_touch(i);
+			for(uint8_t i=0; i < NUMTOUCH; i++)
+				switches[i] = digitalRead(TOUCH_PIN + i);
 
-				if (touch[i].value > TOUCHREF) {
-					touch[i].state = 1 - touch[i].state;
-					touched = 1;
-				}
-				switches[i] = touch[i].state;
-			}
-			if (!touched)
-				return 0;
 			memcpy(packet->payload.data, &switches, sizeof(switches));
 			break;
 		}
+		case C_START:
+			memcpy(packet->payload.data, &node_id, sizeof(node_id));
+			break;
 		default:
 			return 0;
 	}
@@ -299,22 +299,31 @@ uint8_t prepare_packet(uint8_t code, Packet *packet) {
 
 void start_bootloader()
 {
-	MCUSR = 0;
-
-	typedef void (*do_reboot_t)(void);
-//	const do_reboot_t do_reboot = (do_reboot_t)((FLASHEND-511)>>1);
-	//const do_reboot_t do_reboot = (do_reboot_t)(0x3D00>>1);
-
 	for(uint8_t i=0; i < 7; i++) {
 		digitalWrite(BUS_ENABLE, HIGH);
 		delay(200);
 		digitalWrite(BUS_ENABLE, LOW);
 		delay(50);
 	}
+	MCUSR = 0;
 	cli();
 	noInterrupts();
 	asm volatile ("ijmp" ::"z" (0x3D00));
-	//do_reboot();
+}
+
+uint16_t get_id() {
+	/* READ NODE ID FROM FLASH */
+	uint16_t address = 0x3ffc;
+	uint8_t ch;
+	uint16_t id;
+
+	__asm__ ("lpm %0,Z+\n" : "=r" (ch) , "=z" (address) : "1" (address));
+	id = ch;
+
+	__asm__ ("lpm %0,Z+\n" : "=r" (ch) , "=z" (address) : "1" (address));
+	id += 256 * ch;
+
+	return id;
 }
 
 void flushinputbuffer() {
@@ -328,7 +337,7 @@ uint8_t push(Packet *packet) {
 	send(packet);
 	timeout = millis();
 	while(!receive(packet) && (millis() - timeout) < PACKET_TIMEOUT);
-	if(packet->dest == NODE_ID) {
+	if(packet->dest == node_id) {
 		/* TODO: da completare con interprete pacchetto */
 	} else {
 		delay(PACKET_TIMEOUT);
