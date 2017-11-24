@@ -72,12 +72,13 @@ void setup()
 	Packet packet;
 
 	prepare_packet(C_START, &packet);
-	push(&packet);
+	enqueue(&packet);
 }
 
 void loop()
 {
 	Packet packet;
+	Item item;
 
 	if(receive(&packet)) {
 //		Serial.print("Source=");
@@ -118,25 +119,26 @@ void loop()
 					}
 					break;
 				}
-				case C_RESET: {
-					start_bootloader();
-					break;
-				}
 				default:
 					prepare_packet(packet.payload.code, &packet);
 			}
 			send(&packet);
+			if(packet.payload.code == C_RESET)
+				start_bootloader();
 		}
 	} else {
 		for (uint8_t i = 0; i < NUMTIMEOUT; i++) {
 			if ((push_timeout[i].code) &&
 					(push_timeout[i].value) &&
 					((millis() - push_timeout[i].timer) > push_timeout[i].value)) {
-				if(prepare_packet(push_timeout[i].code, &packet) &&
-						(push(&packet) || (push_timeout[i].retry++ > MAX_PUSH_RETRY))) {
+				if(prepare_packet(push_timeout[i].code, &packet) && enqueue(&packet)) {
 					push_timeout[i].timer = millis();
-					push_timeout[i].retry = 0;
 				}
+			}
+		}
+		while (dequeue(&item)) {
+			if (!push(&item.packet) && item.retry++ <= MAX_RETRY) {
+				enqueue(&item);
 			}
 		}
 	}
@@ -233,7 +235,7 @@ uint8_t prepare_packet(uint8_t code, Packet *packet) {
 	packet->source = node_id;
 	packet->dest = hub_node;
 	packet->payload.code = code;
-	memset(packet->payload.data, 0, sizeof(packet->payload.data));
+	memset(packet->payload.data, 0, MAX_DATA_SIZE);
 	switch(code) {
 		case C_MEM: {
 			int free = freeMemory();
@@ -288,9 +290,9 @@ uint8_t prepare_packet(uint8_t code, Packet *packet) {
 			memcpy(packet->payload.data, &switches, sizeof(switches));
 			break;
 		}
-		case C_START:
-			memcpy(packet->payload.data, &node_id, sizeof(node_id));
+		case C_START: {
 			break;
+		}
 		default:
 			return 0;
 	}
@@ -305,6 +307,7 @@ void start_bootloader()
 		digitalWrite(BUS_ENABLE, LOW);
 		delay(50);
 	}
+
 	MCUSR = 0;
 	cli();
 	noInterrupts();
@@ -331,6 +334,44 @@ void flushinputbuffer() {
 		Serial.read();
 }
 
+uint8_t enqueue(Item *item) {
+	/* Do not enqueue if there is already a packet with the same code and dest */
+	for (uint8_t i=0; i<MAX_QUEUE_SIZE; i++) {
+		if (queue[i].packet.payload.code == item->packet.payload.code &&
+				queue[i].packet.dest == item->packet.dest) {
+			return 2;
+		}
+	}
+
+	/* Enqueue if there is space available */
+	for (uint8_t i=0; i<MAX_QUEUE_SIZE; i++) {
+		if (queue[i].packet.payload.code == 0) {
+			memcpy(&queue[i], item, sizeof(Item));
+			return 1;
+		}
+	}
+	return 0;
+}
+
+uint8_t enqueue(Packet *packet) {
+	Item item;
+
+	memcpy(&item.packet, packet, sizeof(Packet));
+	return enqueue(&item);
+}
+
+uint8_t dequeue(Item *item) {
+	/* Enqueue if there is something */
+	for (uint8_t i=0; i<MAX_QUEUE_SIZE; i++) {
+		if (queue[i].packet.payload.code != 0) {
+			memcpy(item, &queue[i], sizeof(Item));
+			memset(&queue[i], 0, sizeof(Item));
+			return 1;
+		}
+	}
+	return 0;
+}
+
 uint8_t push(Packet *packet) {
 	unsigned long timeout;
 
@@ -348,7 +389,7 @@ uint8_t push(Packet *packet) {
 }
 
 uint8_t send(Packet* pkt) {
-	if(Serial.availableForWrite() < (int)sizeof(pkt->payload.data)) {
+	if(Serial.availableForWrite() < (int)sizeof(Packet)) {
 		Serial.print("Full buffer");
 		return 0;
 	}

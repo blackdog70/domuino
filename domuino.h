@@ -48,11 +48,20 @@ struct Packet {
     Payload payload;
 };
 
+#define MAX_QUEUE_SIZE 6
+
+struct Item {
+	uint8_t retry;
+	Packet packet;
+};
+
+Item queue[MAX_QUEUE_SIZE];
+
 #define BUS_ENABLE 2
 #define PACKET_TIMEOUT 100UL 	// milliseconds
 #define NUM_PACKET 1
 #define MAX_BUFFER_SIZE (NUM_PACKET * (sizeof(Packet) + 5)) // 5 = 2 bytes header, 1 byte size, 2 bytes CRC
-#define MAX_PUSH_RETRY 3
+#define MAX_RETRY 3
 
 /*
  * Commands settings
@@ -64,6 +73,7 @@ struct Packet {
 #define C_START 		0x80
 #define C_PING 			0x81
 #define C_RESET 		0x82
+#define C_PROGRAM 		0x83
 #define C_CONFIG 		0x88
 #define C_HUB 			0x89
 #define C_MEM 			0x90
@@ -141,6 +151,9 @@ uint8_t refresh_sensor(uint8_t code);
 uint8_t prepare_packet(uint8_t code, Packet *packet);
 void display_info();
 void start_bootloader();
+uint8_t enqueue(Item *item);
+uint8_t enqueue(Packet *packet);
+uint8_t dequeue(Item *queue);
 uint8_t push(Packet *packet);
 void flushinputbuffer();
 uint8_t receive(Packet* packet);
