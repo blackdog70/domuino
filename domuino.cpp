@@ -63,7 +63,7 @@ void setup()
 	push_timeout[4].code = C_EMS;
 //	push_timeout[4].value = 1;
 	push_timeout[5].code = C_SWITCH;
-//	push_timeout[5].value = 1000;
+	push_timeout[5].value = 500;
 
 	/* READ NODE ID FROM FLASH */
 	node_id = get_id();
@@ -283,9 +283,15 @@ uint8_t prepare_packet(uint8_t code, Packet *packet) {
 		}
 		case C_SWITCH: {
 			uint8_t switches[6] = {0, 0, 0 ,0 ,0, 0};
+			uint8_t keypressed;
 
-			for(uint8_t i=0; i < NUMTOUCH; i++)
+			for(uint8_t i=0; i < NUMTOUCH; i++) {
 				switches[i] = digitalRead(TOUCH_PIN + i);
+				keypressed += switches[i];
+			}
+
+			if (!keypressed)
+				return 0;
 
 			memcpy(packet->payload.data, &switches, sizeof(switches));
 			break;
