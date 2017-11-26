@@ -8,7 +8,6 @@
 #include "domuino.h"
 
 Timeout push_timeout[6];
-int info_type = 0;
 uint16_t node_id;
 uint8_t running = 0;
 
@@ -73,12 +72,12 @@ void setup()
 
 	prepare_packet(C_START, &packet);
 	enqueue(&packet);
+	state = RUN;
 }
 
 void loop()
 {
 	Packet packet;
-	Item item;
 
 	if(receive(&packet)) {
 //		Serial.print("Source=");
@@ -119,26 +118,51 @@ void loop()
 					}
 					break;
 				}
-				default:
-					prepare_packet(packet.payload.code, &packet);
+				case C_RESET:
+					state = PROGRAM;
+					break;
+				case C_STANDBY:
+					state = STANDBY;
+					break;
+				case C_RUN:
+					state = RUN;
+					break;
 			}
+			prepare_packet(packet.payload.code, &packet);
 			send(&packet);
-			if(packet.payload.code == C_RESET)
-				start_bootloader();
 		}
 	} else {
-		for (uint8_t i = 0; i < NUMTIMEOUT; i++) {
-			if ((push_timeout[i].code) &&
-					(push_timeout[i].value) &&
-					((millis() - push_timeout[i].timer) > push_timeout[i].value)) {
-				if(prepare_packet(push_timeout[i].code, &packet) && enqueue(&packet)) {
-					push_timeout[i].timer = millis();
+		switch (state) {
+			case RUN: {
+				for (uint8_t i = 0; i < NUMTIMEOUT; i++) {
+					if ((push_timeout[i].code) &&
+							(push_timeout[i].value) &&
+							((millis() - push_timeout[i].timer) > push_timeout[i].value)) {
+						if(prepare_packet(push_timeout[i].code, &packet) && enqueue(&packet)) {
+							push_timeout[i].timer = millis();
+						}
+					}
 				}
+
+				Item item;
+
+				while (dequeue(&item)) {
+					if (!push(&item.packet) && item.retry++ <= MAX_RETRY) {
+						enqueue(&item);
+					}
+				}
+				break;
 			}
-		}
-		while (dequeue(&item)) {
-			if (!push(&item.packet) && item.retry++ <= MAX_RETRY) {
-				enqueue(&item);
+			case PROGRAM: {
+				start_bootloader();
+				break;
+			}
+			case STANDBY: {
+				digitalWrite(BUS_ENABLE, HIGH);
+				delay(1);
+				digitalWrite(BUS_ENABLE, LOW);
+				delay(500);
+				break;
 			}
 		}
 	}
@@ -147,8 +171,6 @@ void loop()
 
 void display_info()
 {
-	char tmp[20];
-
 	oled.setFont(font5x7);
 	oled.setCursor(40, 0);
 	if(running)
@@ -170,66 +192,7 @@ void display_info()
 	oled.print(dht_state.temperature / 10.0);
 	oled.setCursor(40,  5);
 	oled.print(dht_state.humidity / 10.0);
-
-
-//	if (touch[0].state) {
-//		if(++info_type > 2)
-//			info_type = 0;
-//		clearScr();
-//	} else if (touch[1].state) {
-//		if(--info_type < 0)
-//			info_type = 2;
-//		clearScr();
-//	}
-//
-//	current_font = (uint8_t*)SmallFont;
-//	if(running)
-//		oledWriteString(40, 0, ".DOMUINO.");
-//	else
-//		oledWriteString(40, 0, " DOMUINO ");
-//	running = 1 - running;
-//
-//	switch (info_type) {
-//		case 0:
-//			oledWriteString(5, 3, "TEMP");
-//			oledWriteString(119, 3, "C");
-//			oledWriteString(5, 6, "HUM");
-//			oledWriteString(119, 6, "%");
-////			current_font = (uint8_t*)digits14x24;
-////			dtostrf(dht_state.temperature / 10.0, 5, 1, tmp);
-//			oledWriteString(40, 2, "41.2");
-////			dtostrf(dht_state.humidity / 10.0, 5, 1, tmp);
-//			oledWriteString(40, 5, "60.3");
-//			break;
-//		case 1: {
-//			oledWriteString(0, 3, "LUX");
-//			current_font = (uint8_t*)digits14x24;
-//			dtostrf(lux_state, 4, 0, tmp);
-//			oledWriteString(40, 2, tmp);
-//			break;
-//		}
-//		case 2:
-//			oledWriteString(0, 3, "PIR");
-//			current_font = (uint8_t*)digits14x24;
-//			dtostrf(pir_state, 2, 0 , tmp);
-//			oledWriteString(40, 2, tmp);
-//			break;
-//		case 3:
-////			oledWriteString(0, 2, "Touch");
-////			current_font = (uint8_t*)digits14x24;
-////			for (int i=0; i < NUMTOUCH; i++) {
-////				sprintf(tmp, "%i\0", touch[i].state);
-////				oledWriteString(30 + (16 * i), 2, tmp);
-////			}
-//			break;
-//		default:
-//			break;
-//	}
 }
-
-//void calibrate_touch(int i) {
-//    touch[i].base_value = touch_sensor.readRaw(TOUCH_PIN + i, TOUCHSAMPLES);    //create reference for off state
-//}
 
 uint8_t prepare_packet(uint8_t code, Packet *packet) {
 	packet->source = node_id;
@@ -296,9 +259,12 @@ uint8_t prepare_packet(uint8_t code, Packet *packet) {
 			memcpy(packet->payload.data, &switches, sizeof(switches));
 			break;
 		}
-		case C_START: {
+		case C_START:
+		case C_RESET:
+		case C_STANDBY:
+		case C_RUN:
+		case C_CONFIG:
 			break;
-		}
 		default:
 			return 0;
 	}

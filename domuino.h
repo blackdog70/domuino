@@ -73,7 +73,8 @@ Item queue[MAX_QUEUE_SIZE];
 #define C_START 		0x80
 #define C_PING 			0x81
 #define C_RESET 		0x82
-#define C_PROGRAM 		0x83
+#define C_STANDBY 		0x83
+#define C_RUN	 		0x84
 #define C_CONFIG 		0x88
 #define C_HUB 			0x89
 #define C_MEM 			0x90
@@ -144,6 +145,12 @@ int lux_state;
 #define TOUCH_PIN 3 // Base pin, others will be Base+1, Base+2 and so on
 
 uint16_t hub_node;
+
+#define RUN 0
+#define STANDBY 1
+#define PROGRAM 2
+
+uint8_t state;
 
 // void calibrate_touch(int i);
 uint16_t get_id();
