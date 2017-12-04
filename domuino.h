@@ -9,27 +9,21 @@
 #define DOMUINO_H_
 
 #include "Arduino.h"
-//#include "settings.h"
-#include <avr/wdt.h>
 #include <crc16.h>
-#include <EEPROM.h>
 #include <FreeMemory.h>
 #include <EmonLib.h>
-//#include <Domuino.h>
-//#include <simpleoled.h>
 #include <DHT.h>
-#include <Wire.h>
 #include <SSD1306Ascii.h>
-#include <SSD1306AsciiAvrI2c.h>
+//#include <SSD1306AsciiAvrI2c.h>
+#include <SSD1306AsciiWire.h>
 
-/* MAIN settings */
-#define SERIAL pgm_read_word_near(0x7ffd);
 
 /*
  * LCD settings
  */
 #define I2C_ADDRESS 0x3C
-SSD1306AsciiAvrI2c oled;
+//SSD1306AsciiAvrI2c oled;
+SSD1306AsciiWire oled;
 
 /*
  * Communication settings
@@ -47,6 +41,8 @@ struct Packet {
 	uint16_t dest;
     Payload payload;
 };
+
+const char header[3] = {0x08, 0x70, sizeof(Packet)};
 
 #define MAX_QUEUE_SIZE 6
 
@@ -151,9 +147,8 @@ uint16_t hub_node;
 #define PROGRAM 2
 
 uint8_t state;
-
-// void calibrate_touch(int i);
 uint16_t get_id();
+void showlogo();
 uint8_t refresh_sensor(uint8_t code);
 uint8_t prepare_packet(uint8_t code, Packet *packet);
 void display_info();

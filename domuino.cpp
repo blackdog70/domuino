@@ -6,6 +6,7 @@
  */
 
 #include "domuino.h"
+#include "logo.h"
 
 Timeout push_timeout[6];
 uint16_t node_id;
@@ -21,7 +22,9 @@ void setup()
 	hub_node = 1;	// Set to default hub
 
 	/* INIT LCD */
-	oled.begin(&Adafruit128x64, I2C_ADDRESS, false);
+	//oled.begin(&Adafruit128x64, I2C_ADDRESS, false);
+	oled.begin(&Adafruit128x64, I2C_ADDRESS);
+	oled.set400kHz();
 
 /*  PRIMA DI RIABILITARE LA VISUALIZZAZIONE DEL LOGO
  *  CONSIDERARE CHE E' STATO DISATTIVATO PER EVITARE PROBLEMI
@@ -33,9 +36,8 @@ void setup()
  *  ESEGUITO IL VERIFY DEL DOWNLOAD), IN EFFETTI RESTANDO AL DI SOTTO DI UNA CERTA
  *  SIZE DEL CODICE IL PROBLEMA NON SI VERIFICA
  */
-//	oledDraw(32, 0, (uint8_t*)hass64x64);
-//	delay(3000);
-	oled.clear();
+//	oled.clear();
+	showlogo();
 
 	/* INIT IO PINS */
 	pinMode(DHT_PIN, INPUT);
@@ -45,10 +47,6 @@ void setup()
 
 	/* INITIAL SENSOR STATE */
 	pir_state = LOW;
-
-	/* INIT TOUCH */
-//	for(uint8_t i=0; i < NUMTOUCH; i++)
-//		calibrate_touch(i);
 
 //	/* INIT TIMEOUT */
 	push_timeout[0].code = C_HBT;
@@ -114,7 +112,7 @@ void loop()
 						case C_EMS:
 							push_timeout[4].value = packet.payload.data[1] * 1000UL;
 						case C_SWITCH:
-							push_timeout[4].value = packet.payload.data[1] * 1000UL;
+							push_timeout[5].value = packet.payload.data[1] * 1000UL;
 					}
 					break;
 				}
@@ -271,24 +269,16 @@ uint8_t prepare_packet(uint8_t code, Packet *packet) {
 	return 1;
 }
 
-void start_bootloader()
-{
-	for(uint8_t i=0; i < 7; i++) {
-		digitalWrite(BUS_ENABLE, HIGH);
-		delay(200);
-		digitalWrite(BUS_ENABLE, LOW);
-		delay(50);
-	}
-
+void start_bootloader() {
 	MCUSR = 0;
 	cli();
 	noInterrupts();
-	asm volatile ("ijmp" ::"z" (0x3D00));
+	asm volatile ("ijmp" ::"z" (0x3e00));
 }
 
 uint16_t get_id() {
 	/* READ NODE ID FROM FLASH */
-	uint16_t address = 0x3ffc;
+	uint16_t address = 0x3ffe;
 	uint8_t ch;
 	uint16_t id;
 
@@ -299,6 +289,22 @@ uint16_t get_id() {
 	id += 256 * ch;
 
 	return id;
+}
+
+void showlogo() {
+	uint8_t rows = *logo64x64;
+	uint8_t cols = *(logo64x64 + 1);
+
+	uint8_t *char_idx = logo64x64 + 2;
+
+	for (uint8_t r = 0; r <= rows - 1; r++) {
+		oled.setCursor(32, r);
+		for (uint8_t c = 0; c <= cols - 1; c++) {
+			oled.ssd1306WriteRamBuf(pgm_read_byte(char_idx++));
+		}
+	}
+	delay(2000);
+	oled.clear();
 }
 
 void flushinputbuffer() {
@@ -350,9 +356,14 @@ uint8_t push(Packet *packet) {
 	send(packet);
 	timeout = millis();
 	while(!receive(packet) && (millis() - timeout) < PACKET_TIMEOUT);
-	if(packet->dest == node_id) {
+//	if(packet->dest == node_id) {
 		/* TODO: da completare con interprete pacchetto */
-	} else {
+//	} else {
+//		delay(PACKET_TIMEOUT);
+//		flushinputbuffer();
+//		return 0;
+//	}
+	if(packet->dest != node_id) {
 		delay(PACKET_TIMEOUT);
 		flushinputbuffer();
 		return 0;
@@ -371,15 +382,15 @@ uint8_t send(Packet* pkt) {
 	 * to wait for bus enable and disable to be sure for
 	 * a complete transmission
 	 */
-	uint8_t size = sizeof(Packet);
-	uint16_t chksum = ModRTU_CRC((char*)pkt, size);
+	uint16_t chksum = ModRTU_CRC((char*)pkt, sizeof(Packet));
 
 	digitalWrite(BUS_ENABLE, HIGH);          			// 485 write mode
 	delayMicroseconds(50);
+//	Serial.write(header);
 	Serial.write(0x08);
 	Serial.write(0x70);
-	Serial.write(size);
-	Serial.write((unsigned char *)pkt, size);
+	Serial.write(sizeof(Packet));
+	Serial.write((unsigned char *)pkt, sizeof(Packet));
 	Serial.write((char*)&chksum, 2);
 //	while (!(UCSR0A & _BV(TXC0)));						// wait for complete transmission
 	Serial.flush();										// wait for complete transmission
@@ -389,19 +400,19 @@ uint8_t send(Packet* pkt) {
 }
 
 uint8_t receive(Packet* packet) {
-	int ch;
-	char buffer[MAX_BUFFER_SIZE];
+//	int ch;
 
 	// Wait for Header
 	do {
 		if (Serial.available() < 3)
 			return 0;
-		ch = Serial.read();
-	} while(ch != 0x08);
+//		ch = Serial.read();
+	} while(Serial.read() != 0x08);
 	if (Serial.read() != 0x70)
 		return 0;
 
 	uint16_t size = Serial.read();
+	char buffer[MAX_BUFFER_SIZE];
 
 //	Serial.print("Wait packet");
 	// Wait for packet
@@ -414,6 +425,7 @@ uint8_t receive(Packet* packet) {
 //	Serial.print("Wait CRC");
 	// Wait for CRC
 	uint16_t chksum;
+
 	if (Serial.readBytes((char *)&chksum, 2) < 2) {
 		flushinputbuffer();
 		return 0;
