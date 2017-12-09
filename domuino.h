@@ -25,6 +25,11 @@
 //SSD1306AsciiAvrI2c oled;
 SSD1306AsciiWire oled;
 
+const uint8_t* fonts[] = {
+		font5x7,
+		lcdnums14x24
+};
+
 /*
  * Communication settings
  */
@@ -74,6 +79,9 @@ Item queue[MAX_QUEUE_SIZE];
 #define C_CONFIG 		0x88
 #define C_HUB 			0x89
 #define C_MEM 			0x90
+#define C_LCDCLEAR		0x91
+#define C_LCDPRINT		0x92
+#define C_LCDWRITE		0x93
 #define C_HBT 			0x9f
 // DEVICE
 #define C_DHT 			0xA0
@@ -148,7 +156,7 @@ uint16_t hub_node;
 
 uint8_t state;
 uint16_t get_id();
-void showlogo();
+void showsplash();
 uint8_t refresh_sensor(uint8_t code);
 uint8_t prepare_packet(uint8_t code, Packet *packet);
 void display_info();

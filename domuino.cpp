@@ -36,8 +36,8 @@ void setup()
  *  ESEGUITO IL VERIFY DEL DOWNLOAD), IN EFFETTI RESTANDO AL DI SOTTO DI UNA CERTA
  *  SIZE DEL CODICE IL PROBLEMA NON SI VERIFICA
  */
-//	oled.clear();
-	showlogo();
+	oled.clear();
+//	showsplash();
 
 	/* INIT IO PINS */
 	pinMode(DHT_PIN, INPUT);
@@ -116,15 +116,35 @@ void loop()
 					}
 					break;
 				}
-				case C_RESET:
+				case C_LCDCLEAR: {
+					oled.clear();
+					break;
+				}
+				case C_LCDPRINT: {
+					oled.setFont(fonts[packet.payload.data[2]]);
+					oled.setCursor(packet.payload.data[1], packet.payload.data[0]);
+					oled.print((const char*)&packet.payload.data[3]);
+					break;
+				}
+				case C_LCDWRITE: {
+					oled.setCursor(packet.payload.data[1], packet.payload.data[0]);
+					for (uint8_t c = 0; c <= packet.payload.data[2] - 1; c++) {
+						oled.ssd1306WriteRamBuf(packet.payload.data[3 + c]);
+					}
+					break;
+				}
+				case C_RESET: {
 					state = PROGRAM;
 					break;
-				case C_STANDBY:
+				}
+				case C_STANDBY: {
 					state = STANDBY;
 					break;
-				case C_RUN:
+				}
+				case C_RUN: {
 					state = RUN;
 					break;
+				}
 			}
 			prepare_packet(packet.payload.code, &packet);
 			send(&packet);
@@ -164,7 +184,7 @@ void loop()
 			}
 		}
 	}
-	display_info();
+//	display_info();
 }
 
 void display_info()
@@ -262,6 +282,9 @@ uint8_t prepare_packet(uint8_t code, Packet *packet) {
 		case C_STANDBY:
 		case C_RUN:
 		case C_CONFIG:
+		case C_LCDCLEAR:
+		case C_LCDPRINT:
+		case C_LCDWRITE:
 			break;
 		default:
 			return 0;
@@ -291,7 +314,7 @@ uint16_t get_id() {
 	return id;
 }
 
-void showlogo() {
+void showsplash() {
 	uint8_t rows = *logo64x64;
 	uint8_t cols = *(logo64x64 + 1);
 
