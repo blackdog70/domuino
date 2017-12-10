@@ -33,7 +33,7 @@ const uint8_t* fonts[] = {
 /*
  * Communication settings
  */
-
+#define BAUDRATE 38400
 #define MAX_DATA_SIZE 12
 
 struct Payload {
@@ -47,7 +47,7 @@ struct Packet {
     Payload payload;
 };
 
-const char header[3] = {0x08, 0x70, sizeof(Packet)};
+const unsigned char header[3] = {0x08, 0x70, sizeof(Packet)};
 
 #define MAX_QUEUE_SIZE 6
 

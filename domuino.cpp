@@ -17,7 +17,7 @@ uint8_t running = 0;
 void setup()
 {
 	/* INIT BUS */
-	Serial.begin(19200);
+	Serial.begin(BAUDRATE);
 	pinMode(BUS_ENABLE, OUTPUT);
 	hub_node = 1;	// Set to default hub
 
@@ -408,28 +408,22 @@ uint8_t send(Packet* pkt) {
 	uint16_t chksum = ModRTU_CRC((char*)pkt, sizeof(Packet));
 
 	digitalWrite(BUS_ENABLE, HIGH);          			// 485 write mode
-	delayMicroseconds(50);
-//	Serial.write(header);
-	Serial.write(0x08);
-	Serial.write(0x70);
-	Serial.write(sizeof(Packet));
+	delayMicroseconds(10);
+	Serial.write(header, sizeof(header));
 	Serial.write((unsigned char *)pkt, sizeof(Packet));
 	Serial.write((char*)&chksum, 2);
 //	while (!(UCSR0A & _BV(TXC0)));						// wait for complete transmission
 	Serial.flush();										// wait for complete transmission
-	delayMicroseconds(50);
+	delayMicroseconds(10);
 	digitalWrite(BUS_ENABLE, LOW);						// 485 read mode
 	return 1;
 }
 
 uint8_t receive(Packet* packet) {
-//	int ch;
-
 	// Wait for Header
 	do {
 		if (Serial.available() < 3)
 			return 0;
-//		ch = Serial.read();
 	} while(Serial.read() != 0x08);
 	if (Serial.read() != 0x70)
 		return 0;
