@@ -10,7 +10,7 @@
 
 Timeout push_timeout[6];
 uint16_t node_id;
-uint8_t running = 0;
+char running = 0;
 
 #define NUMTIMEOUT (sizeof(push_timeout) / sizeof(Timeout))
 
@@ -45,6 +45,9 @@ void setup()
 	pinMode(LUX_IN, INPUT);
 	dht_sensor.setup(DHT_PIN);
 
+	/* INIT QUEUE */
+	memset(&queue, 0, sizeof(queue));
+
 	/* INITIAL SENSOR STATE */
 	pir_state = LOW;
 
@@ -65,12 +68,7 @@ void setup()
 	/* READ NODE ID FROM FLASH */
 	node_id = get_id();
 
-	/* SEND START */
-	Packet packet;
-
-	prepare_packet(C_START, &packet);
-	enqueue(&packet);
-	state = RUN;
+	state = START;
 }
 
 void loop()
@@ -94,6 +92,11 @@ void loop()
 			flushinputbuffer();
 			delay(PACKET_TIMEOUT);
 		} else {
+			/* If receive a packet for this node and state is START
+			 * then state become RUN
+			 */
+			if(state == START)
+				state = RUN;
 			/* Wait 1ms before reply to give time for transmission
 			 * direction change
 			 */
@@ -151,6 +154,23 @@ void loop()
 		}
 	} else {
 		switch (state) {
+			case START: {
+				prepare_packet(C_START, &packet);
+				send(&packet);
+				oled.setFont(fonts[0]);
+				oled.setCursor(30, 4);
+				oled.print("Connecting  ");
+				oled.setCursor(90, 4);
+				if (running == 1)
+					oled.print(".");
+				else if (running == 2) {
+					oled.print("..");
+					running = -1;
+				}
+				delay(1000);
+				running++;
+				break;
+			}
 			case RUN: {
 				for (uint8_t i = 0; i < NUMTIMEOUT; i++) {
 					if ((push_timeout[i].code) &&
@@ -184,32 +204,6 @@ void loop()
 			}
 		}
 	}
-//	display_info();
-}
-
-void display_info()
-{
-	oled.setFont(font5x7);
-	oled.setCursor(40, 0);
-	if(running)
-		oled.print(".DOMUINO.");
-	else
-		oled.print(" DOMUINO ");
-	running = 1 - running;
-
-	oled.setCursor(5,  3);
-	oled.print("TEMP");
-	oled.setCursor(119,  3);
-	oled.print("C");
-	oled.setCursor(5,  6);
-	oled.print("HUM");
-	oled.setCursor(119,  6);
-	oled.print("%");
-	oled.setFont(lcdnums14x24);
-	oled.setCursor(40,  2);
-	oled.print(dht_state.temperature / 10.0);
-	oled.setCursor(40,  5);
-	oled.print(dht_state.humidity / 10.0);
 }
 
 uint8_t prepare_packet(uint8_t code, Packet *packet) {
@@ -293,6 +287,7 @@ uint8_t prepare_packet(uint8_t code, Packet *packet) {
 }
 
 void start_bootloader() {
+	wdt_disable(); /* Verificare se serve disabilitare il watchdog */
 	MCUSR = 0;
 	cli();
 	noInterrupts();
@@ -396,7 +391,7 @@ uint8_t push(Packet *packet) {
 
 uint8_t send(Packet* pkt) {
 	if(Serial.availableForWrite() < (int)sizeof(Packet)) {
-		Serial.print("Full buffer");
+		oled.print("Full buffer");
 		return 0;
 	}
 
@@ -412,7 +407,6 @@ uint8_t send(Packet* pkt) {
 	Serial.write(header, sizeof(header));
 	Serial.write((unsigned char *)pkt, sizeof(Packet));
 	Serial.write((char*)&chksum, 2);
-//	while (!(UCSR0A & _BV(TXC0)));						// wait for complete transmission
 	Serial.flush();										// wait for complete transmission
 	delayMicroseconds(10);
 	digitalWrite(BUS_ENABLE, LOW);						// 485 read mode
@@ -424,8 +418,8 @@ uint8_t receive(Packet* packet) {
 	do {
 		if (Serial.available() < 3)
 			return 0;
-	} while(Serial.read() != 0x08);
-	if (Serial.read() != 0x70)
+	} while(Serial.read() != header[0]);
+	if (Serial.read() != header[1])
 		return 0;
 
 	uint16_t size = Serial.read();
