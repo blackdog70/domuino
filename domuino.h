@@ -9,6 +9,7 @@
 #define DOMUINO_H_
 
 #include "Arduino.h"
+#include <avr/wdt.h>
 #include <crc16.h>
 #include <FreeMemory.h>
 #include <EmonLib.h>
@@ -33,6 +34,7 @@ const uint8_t* fonts[] = {
 /*
  * Communication settings
  */
+#define ID_EE_ADDRESS  0x198
 #define BAUDRATE 38400
 #define MAX_DATA_SIZE 12
 
@@ -59,7 +61,7 @@ struct Item {
 Item queue[MAX_QUEUE_SIZE];
 
 #define BUS_ENABLE 2
-#define PACKET_TIMEOUT 100UL 	// milliseconds
+#define PACKET_TIMEOUT 150UL 	// milliseconds
 #define NUM_PACKET 1
 #define MAX_BUFFER_SIZE (NUM_PACKET * (sizeof(Packet) + 5)) // 5 = 2 bytes header, 1 byte size, 2 bytes CRC
 #define MAX_RETRY 3
@@ -69,6 +71,7 @@ Item queue[MAX_QUEUE_SIZE];
  */
 // QUERY: COMMAND > COMMAND_PATTERN
 // ANSWER: COMMAND <= COMMAND_PATTERN
+
 #define COMMAND_PATTERN  0x80
 // SYSTEM
 #define C_START 		0x80
@@ -76,6 +79,7 @@ Item queue[MAX_QUEUE_SIZE];
 #define C_RESET 		0x82
 #define C_STANDBY 		0x83
 #define C_RUN	 		0x84
+#define C_SETID			0x85
 #define C_CONFIG 		0x88
 #define C_HUB 			0x89
 #define C_MEM 			0x90
@@ -150,15 +154,18 @@ int lux_state;
 
 uint16_t hub_node;
 
-#define RUN 0
-#define STANDBY 1
-#define PROGRAM 2
+#define START 0
+#define RUN 1
+#define STANDBY 2
+#define PROGRAM 3
 
 uint8_t state;
-uint16_t get_id();
+uint16_t get_id(); // get address
+void set_id(uint16_t); // set address
 void showsplash();
 uint8_t refresh_sensor(uint8_t code);
-uint8_t prepare_packet(uint8_t code, Packet *packet);
+uint8_t exec_command(Packet *packet);
+void prepare_packet(uint8_t code, Packet *packet);
 void display_info();
 void start_bootloader();
 uint8_t enqueue(Item *item);

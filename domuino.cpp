@@ -44,6 +44,8 @@ void setup()
 	pinMode(PIR_IN, INPUT);
 	pinMode(LUX_IN, INPUT);
 	dht_sensor.setup(DHT_PIN);
+	for(uint8_t i=0; i++; i<NUMTOUCH)
+		pinMode(TOUCH_PIN + i, INPUT);
 
 	/* INIT QUEUE */
 	memset(&queue, 0, sizeof(queue));
@@ -101,54 +103,7 @@ void loop()
 			 * direction change
 			 */
 			delay(10);
-			switch(packet.payload.code) {
-				case C_CONFIG: {
-					switch(packet.payload.data[0]) {
-						case C_HBT:
-							push_timeout[0].value = packet.payload.data[1] * 1000UL;
-						case C_LUX:
-							push_timeout[1].value = packet.payload.data[1] * 1000UL;
-						case C_PIR:
-							push_timeout[2].value = packet.payload.data[1] * 1000UL;
-						case C_DHT:
-							push_timeout[3].value = packet.payload.data[1] * 1000UL;
-						case C_EMS:
-							push_timeout[4].value = packet.payload.data[1] * 1000UL;
-						case C_SWITCH:
-							push_timeout[5].value = packet.payload.data[1] * 1000UL;
-					}
-					break;
-				}
-				case C_LCDCLEAR: {
-					oled.clear();
-					break;
-				}
-				case C_LCDPRINT: {
-					oled.setFont(fonts[packet.payload.data[2]]);
-					oled.setCursor(packet.payload.data[1], packet.payload.data[0]);
-					oled.print((const char*)&packet.payload.data[3]);
-					break;
-				}
-				case C_LCDWRITE: {
-					oled.setCursor(packet.payload.data[1], packet.payload.data[0]);
-					for (uint8_t c = 0; c <= packet.payload.data[2] - 1; c++) {
-						oled.ssd1306WriteRamBuf(packet.payload.data[3 + c]);
-					}
-					break;
-				}
-				case C_RESET: {
-					state = PROGRAM;
-					break;
-				}
-				case C_STANDBY: {
-					state = STANDBY;
-					break;
-				}
-				case C_RUN: {
-					state = RUN;
-					break;
-				}
-			}
+			exec_command(&packet);
 			prepare_packet(packet.payload.code, &packet);
 			send(&packet);
 		}
@@ -176,7 +131,8 @@ void loop()
 					if ((push_timeout[i].code) &&
 							(push_timeout[i].value) &&
 							((millis() - push_timeout[i].timer) > push_timeout[i].value)) {
-						if(prepare_packet(push_timeout[i].code, &packet) && enqueue(&packet)) {
+						prepare_packet(push_timeout[i].code, &packet);
+						if(exec_command(&packet) && enqueue(&packet)) {
 							push_timeout[i].timer = millis();
 						}
 					}
@@ -206,12 +162,66 @@ void loop()
 	}
 }
 
-uint8_t prepare_packet(uint8_t code, Packet *packet) {
+void prepare_packet(uint8_t code, Packet *packet) {
 	packet->source = node_id;
 	packet->dest = hub_node;
 	packet->payload.code = code;
 	memset(packet->payload.data, 0, MAX_DATA_SIZE);
-	switch(code) {
+}
+
+uint8_t exec_command(Packet *packet) {
+	switch(packet->payload.code) {
+		case C_CONFIG: {
+			switch(packet->payload.data[0]) {
+				case C_HBT:
+					push_timeout[0].value = packet->payload.data[1] * 1000UL;
+				case C_LUX:
+					push_timeout[1].value = packet->payload.data[1] * 1000UL;
+				case C_PIR:
+					push_timeout[2].value = packet->payload.data[1] * 1000UL;
+				case C_DHT:
+					push_timeout[3].value = packet->payload.data[1] * 1000UL;
+				case C_EMS:
+					push_timeout[4].value = packet->payload.data[1] * 1000UL;
+				case C_SWITCH:
+					push_timeout[5].value = packet->payload.data[1] * 1000UL;
+			}
+			break;
+		}
+		case C_LCDCLEAR: {
+			oled.clear();
+			break;
+		}
+		case C_LCDPRINT: {
+			oled.setFont(fonts[packet->payload.data[2]]);
+			oled.setCursor(packet->payload.data[1], packet->payload.data[0]);
+			oled.print((const char*)&packet->payload.data[3]);
+			break;
+		}
+		case C_LCDWRITE: {
+			oled.setCursor(packet->payload.data[1], packet->payload.data[0]);
+			for (uint8_t c = 0; c <= packet->payload.data[2] - 1; c++) {
+				oled.ssd1306WriteRamBuf(packet->payload.data[3 + c]);
+			}
+			break;
+		}
+		case C_RESET: {
+			state = PROGRAM;
+			break;
+		}
+		case C_SETID: {
+			uint16_t new_value = packet->payload.data[1] * 256 + packet->payload.data[0];
+			set_id(new_value);
+			break;
+		}
+		case C_STANDBY: {
+			state = STANDBY;
+			break;
+		}
+		case C_RUN: {
+			state = RUN;
+			break;
+		}
 		case C_MEM: {
 			int free = freeMemory();
 
@@ -271,15 +281,15 @@ uint8_t prepare_packet(uint8_t code, Packet *packet) {
 			memcpy(packet->payload.data, &switches, sizeof(switches));
 			break;
 		}
-		case C_START:
-		case C_RESET:
-		case C_STANDBY:
-		case C_RUN:
-		case C_CONFIG:
-		case C_LCDCLEAR:
-		case C_LCDPRINT:
-		case C_LCDWRITE:
-			break;
+//		case C_START:
+//		case C_RESET:
+//		case C_STANDBY:
+//		case C_RUN:
+//		case C_CONFIG:
+//		case C_LCDCLEAR:
+//		case C_LCDPRINT:
+//		case C_LCDWRITE:
+//			break;
 		default:
 			return 0;
 	}
@@ -296,17 +306,21 @@ void start_bootloader() {
 
 uint16_t get_id() {
 	/* READ NODE ID FROM FLASH */
-	uint16_t address = 0x3ffe;
-	uint8_t ch;
-	uint16_t id;
+//	uint16_t address = 0x3ffe;
+//	uint8_t ch;
+//	uint16_t id;
+//
+//	__asm__ ("lpm %0,Z+\n" : "=r" (ch) , "=z" (address) : "1" (address));
+//	id = ch;
+//
+//	__asm__ ("lpm %0,Z+\n" : "=r" (ch) , "=z" (address) : "1" (address));
+//	id += 256 * ch;
 
-	__asm__ ("lpm %0,Z+\n" : "=r" (ch) , "=z" (address) : "1" (address));
-	id = ch;
+	return eeprom_read_word((uint16_t*)ID_EE_ADDRESS);
+}
 
-	__asm__ ("lpm %0,Z+\n" : "=r" (ch) , "=z" (address) : "1" (address));
-	id += 256 * ch;
-
-	return id;
+void set_id(uint16_t new_value) {
+	eeprom_update_word((uint16_t*)ID_EE_ADDRESS, new_value);
 }
 
 void showsplash() {
