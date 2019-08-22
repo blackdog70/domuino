@@ -44,7 +44,7 @@ void setup()
 	pinMode(PIR_IN, INPUT);
 	pinMode(LUX_IN, INPUT);
 	dht_sensor.setup(DHT_PIN);
-	for(uint8_t i=0; i++; i<NUMTOUCH)
+	for(uint8_t i=0; i<NUMTOUCH; i++)
 		pinMode(TOUCH_PIN + i, INPUT);
 
 	/* INIT QUEUE */
@@ -53,24 +53,23 @@ void setup()
 	/* INITIAL SENSOR STATE */
 	pir_state = LOW;
 
-//	/* INIT TIMEOUT */
+	/* INIT TIMEOUT CODES
+	 * TIMEOUTS are in milliseconds.
+	 * TIMEOUT is used to push repeatedly in automatic the result of a command without a specific request.
+	 * for example if C_DHT timeout will be 10000, DOMUINO will push the values of temperature and humidity every 10 seconds.
+	 */
 	push_timeout[0].code = C_HBT;
-//	push_timeout[0].value = 2;
+	push_timeout[0].value = 5000; // Only heartbit is active
 	push_timeout[1].code = C_LUX;
-//	push_timeout[1].value = 30000;
 	push_timeout[2].code = C_PIR;
-//	push_timeout[2].value = 1;
 	push_timeout[3].code = C_DHT;
-	push_timeout[3].value = 10000;
 	push_timeout[4].code = C_EMS;
-//	push_timeout[4].value = 1;
 	push_timeout[5].code = C_SWITCH;
-	push_timeout[5].value = 500;
 
 	/* READ NODE ID FROM FLASH */
 	node_id = get_id();
 
-	state = START;
+	state = RUN;
 }
 
 void loop()
@@ -96,9 +95,9 @@ void loop()
 		} else {
 			/* If receive a packet for this node and state is START
 			 * then state become RUN
+			 * if(state == START)
+			 *	state = RUN;
 			 */
-			if(state == START)
-				state = RUN;
 			/* Wait 1ms before reply to give time for transmission
 			 * direction change
 			 */
@@ -109,23 +108,6 @@ void loop()
 		}
 	} else {
 		switch (state) {
-			case START: {
-				prepare_packet(C_START, &packet);
-				send(&packet);
-				oled.setFont(fonts[0]);
-				oled.setCursor(30, 4);
-				oled.print("Connecting  ");
-				oled.setCursor(90, 4);
-				if (running == 1)
-					oled.print(".");
-				else if (running == 2) {
-					oled.print("..");
-					running = -1;
-				}
-				delay(1000);
-				running++;
-				break;
-			}
 			case RUN: {
 				for (uint8_t i = 0; i < NUMTIMEOUT; i++) {
 					if ((push_timeout[i].code) &&
@@ -137,7 +119,6 @@ void loop()
 						}
 					}
 				}
-
 				Item item;
 
 				while (dequeue(&item)) {
@@ -149,13 +130,6 @@ void loop()
 			}
 			case PROGRAM: {
 				start_bootloader();
-				break;
-			}
-			case STANDBY: {
-				digitalWrite(BUS_ENABLE, HIGH);
-				delay(1);
-				digitalWrite(BUS_ENABLE, LOW);
-				delay(500);
 				break;
 			}
 		}
@@ -173,18 +147,32 @@ uint8_t exec_command(Packet *packet) {
 	switch(packet->payload.code) {
 		case C_CONFIG: {
 			switch(packet->payload.data[0]) {
-				case C_HBT:
-					push_timeout[0].value = packet->payload.data[1] * 1000UL;
-				case C_LUX:
-					push_timeout[1].value = packet->payload.data[1] * 1000UL;
-				case C_PIR:
-					push_timeout[2].value = packet->payload.data[1] * 1000UL;
-				case C_DHT:
-					push_timeout[3].value = packet->payload.data[1] * 1000UL;
-				case C_EMS:
-					push_timeout[4].value = packet->payload.data[1] * 1000UL;
-				case C_SWITCH:
-					push_timeout[5].value = packet->payload.data[1] * 1000UL;
+				case C_HBT: {
+					unsigned long timeout = (unsigned long)packet->payload.data[1];
+					if (timeout > 0)
+						push_timeout[0].value = timeout * 1000UL;
+					break;
+				}
+				case C_LUX: {
+					push_timeout[1].value = (unsigned long)packet->payload.data[1] * 1000UL;
+					break;
+				}
+				case C_PIR: {
+					push_timeout[2].value = (unsigned long)packet->payload.data[1] * 1000UL;
+					break;
+				}
+				case C_DHT: {
+					push_timeout[3].value = (unsigned long)packet->payload.data[1] * 1000UL;
+					break;
+				}
+				case C_EMS: {
+					push_timeout[4].value = (unsigned long)packet->payload.data[1] * 1000UL;
+					break;
+				}
+				case C_SWITCH: {
+					push_timeout[5].value = (unsigned long)packet->payload.data[1] * 1000UL;
+					break;
+				}
 			}
 			break;
 		}
@@ -205,7 +193,7 @@ uint8_t exec_command(Packet *packet) {
 			}
 			break;
 		}
-		case C_RESET: {
+		case C_PROGRAM: {
 			state = PROGRAM;
 			break;
 		}
@@ -214,12 +202,7 @@ uint8_t exec_command(Packet *packet) {
 			set_id(new_value);
 			break;
 		}
-		case C_STANDBY: {
-			state = STANDBY;
-			break;
-		}
-		case C_RUN: {
-			state = RUN;
+		case C_HBT: {
 			break;
 		}
 		case C_MEM: {
@@ -268,7 +251,7 @@ uint8_t exec_command(Packet *packet) {
 		}
 		case C_SWITCH: {
 			uint8_t switches[6] = {0, 0, 0 ,0 ,0, 0};
-			uint8_t keypressed;
+			uint8_t keypressed = 0;
 
 			for(uint8_t i=0; i < NUMTOUCH; i++) {
 				switches[i] = digitalRead(TOUCH_PIN + i);
@@ -282,13 +265,6 @@ uint8_t exec_command(Packet *packet) {
 			break;
 		}
 //		case C_START:
-//		case C_RESET:
-//		case C_STANDBY:
-//		case C_RUN:
-//		case C_CONFIG:
-//		case C_LCDCLEAR:
-//		case C_LCDPRINT:
-//		case C_LCDWRITE:
 //			break;
 		default:
 			return 0;
@@ -327,7 +303,7 @@ void showsplash() {
 	uint8_t rows = *logo64x64;
 	uint8_t cols = *(logo64x64 + 1);
 
-	uint8_t *char_idx = logo64x64 + 2;
+	uint8_t *char_idx = (uint8_t*)logo64x64 + 2;
 
 	for (uint8_t r = 0; r <= rows - 1; r++) {
 		oled.setCursor(32, r);

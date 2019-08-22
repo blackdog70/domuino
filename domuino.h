@@ -76,8 +76,7 @@ Item queue[MAX_QUEUE_SIZE];
 // SYSTEM
 #define C_START 		0x80
 #define C_PING 			0x81
-#define C_RESET 		0x82
-#define C_STANDBY 		0x83
+#define C_PROGRAM 		0x82
 #define C_RUN	 		0x84
 #define C_SETID			0x85
 #define C_CONFIG 		0x88
@@ -154,10 +153,8 @@ int lux_state;
 
 uint16_t hub_node;
 
-#define START 0
 #define RUN 1
-#define STANDBY 2
-#define PROGRAM 3
+#define PROGRAM 2
 
 uint8_t state;
 uint16_t get_id(); // get address
