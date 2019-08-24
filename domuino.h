@@ -94,6 +94,7 @@ Item queue[MAX_QUEUE_SIZE];
 #define C_LIGHT 		0xA4
 #define C_PIR 			0xA5
 #define C_LUX 			0xA6
+#define C_OUT			0xA7
 
 /*
  * Timing settings in milliseconds
@@ -148,8 +149,15 @@ int lux_state;
 /*
  * TOUCH settings
  */
-#define NUMTOUCH 2
+#define NUMTOUCH 3
 #define TOUCH_PIN 3 // Base pin, others will be Base+1, Base+2 and so on
+
+/*
+ * OUT settings
+ */
+#define NUMOUT 3
+#define OUT_PIN 6 // Base pin, others will be Base+1, Base+2 and so on
+
 
 uint16_t hub_node;
 

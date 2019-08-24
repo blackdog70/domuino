@@ -46,6 +46,11 @@ void setup()
 	dht_sensor.setup(DHT_PIN);
 	for(uint8_t i=0; i<NUMTOUCH; i++)
 		pinMode(TOUCH_PIN + i, INPUT);
+	for(uint8_t i=0; i<NUMOUT; i++) {
+		pinMode(OUT_PIN + i, OUTPUT);
+		digitalWrite(OUT_PIN + i, LOW);
+	}
+
 
 	/* INIT QUEUE */
 	memset(&queue, 0, sizeof(queue));
@@ -249,10 +254,19 @@ uint8_t exec_command(Packet *packet) {
 			memcpy(packet->payload.data, &ems_state, sizeof(Payload_ems));
 			break;
 		}
+		case C_OUT: {
+			for(uint8_t i=0; i < NUMOUT; i++)
+				if(packet->payload.data[i] == 1)
+					digitalWrite(OUT_PIN + i, HIGH);
+				else
+					digitalWrite(OUT_PIN + i, LOW);
+			break;
+		}
 		case C_SWITCH: {
-			uint8_t switches[6] = {0, 0, 0 ,0 ,0, 0};
+			uint8_t switches[NUMTOUCH];
 			uint8_t keypressed = 0;
 
+			memset(&switches, 0, sizeof(switches));
 			for(uint8_t i=0; i < NUMTOUCH; i++) {
 				switches[i] = digitalRead(TOUCH_PIN + i);
 				keypressed += switches[i];
@@ -264,8 +278,6 @@ uint8_t exec_command(Packet *packet) {
 			memcpy(packet->payload.data, &switches, sizeof(switches));
 			break;
 		}
-//		case C_START:
-//			break;
 		default:
 			return 0;
 	}
