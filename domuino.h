@@ -77,6 +77,7 @@ Item queue[MAX_QUEUE_SIZE];
 #define C_START 		0x80
 #define C_PING 			0x81
 #define C_PROGRAM 		0x82
+#define C_STANDBY       0x83
 #define C_RUN	 		0x84
 #define C_SETID			0x85
 #define C_CONFIG 		0x88
@@ -94,7 +95,6 @@ Item queue[MAX_QUEUE_SIZE];
 #define C_LIGHT 		0xA4
 #define C_PIR 			0xA5
 #define C_LUX 			0xA6
-#define C_OUT			0xA7
 
 /*
  * Timing settings in milliseconds
@@ -108,10 +108,17 @@ struct Timeout {
 };
 
 #define DHT_TIMEOUT 2000UL
+#define EE_DHT 0x10
+#define SWITCH_TIMEOUT 1000UL
+#define EE_SWITCH 0x11
 #define PIR_TIMEOUT 5000UL
+#define EE_PIR 0x12
 #define LUX_TIMEOUT 10000UL
+#define EE_LUX 0x13
 #define EMS_TIMEOUT 10000UL
-#define HB_TIMING 10000UL  // heartbeat
+#define EE_EMS 0x14
+#define HBT_TIMING 10000UL  // heartbeat
+#define EE_HBT 0x15
 
 /*
  * EMON settings
@@ -149,20 +156,22 @@ int lux_state;
 /*
  * TOUCH settings
  */
-#define NUMTOUCH 3
-#define TOUCH_PIN 3 // Base pin, others will be Base+1, Base+2 and so on
+#define NUMSWITCH 3
+#define SWITCH_BASE_PIN 3 // Base pin, others will be Base+1, Base+2 and so on
+uint8_t switchbuff[NUMSWITCH];
 
 /*
- * OUT settings
+ * LIGHT settings
  */
-#define NUMOUT 3
-#define OUT_PIN 6 // Base pin, others will be Base+1, Base+2 and so on
+#define NUMLIGHT 3
+#define LIGHT_BASE_PIN 6 // Base pin, others will be Base+1, Base+2 and so on
 
 
 uint16_t hub_node;
 
 #define RUN 1
 #define PROGRAM 2
+#define STANDBY 3
 
 uint8_t state;
 uint16_t get_id(); // get address
