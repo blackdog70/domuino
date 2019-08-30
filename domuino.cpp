@@ -63,6 +63,8 @@ void setup()
 	 * TIMEOUT is used to push repeatedly in automatic the result of a command without a specific request.
 	 * for example if C_DHT timeout will be 10000, DOMUINO will push the values of temperature and humidity every 10 seconds.
 	 */
+	memset(&push_timeout, 0, sizeof(push_timeout));
+
 	push_timeout[0].code = C_HBT;
 	push_timeout[0].value = eeprom_read_byte((uint8_t*)EE_HBT) * 1000UL;
 	push_timeout[1].code = C_LUX;
@@ -87,49 +89,34 @@ void loop()
 	Packet packet;
 
 	if(receive(&packet)) {
-//		Serial.print("Source=");
-//		Serial.println(packet.source);
-//		Serial.print("Dest=");
-//		Serial.println(packet.dest);
-//		Serial.print("Code=");
-//		Serial.println(packet.payload.code, HEX);
-//		Serial.print("Data=");
-//		Serial.write((const char *)packet.payload.data, sizeof(packet.payload.data));
-//		if (packet.dest != node_id) {
-//			/* If packet is not for this node wait for the same time of
-//			 * a packet timeout, this will give the time to complete the
-//			 * current transaction between the strangers nodes
-//			 */
-//			flushinputbuffer();
-//			delay(PACKET_TIMEOUT);
-//		} else {
-			/* Wait 1ms before reply to give time for transmission
+			/* Wait 10ms before reply to give time for transmission
 			 * direction change
 			 */
 			delay(10);
-			exec_command(&packet);
-			prepare_packet(packet.payload.code, &packet);
-			//TODO: If the packet will be not received there will be another request from source and this should be not a good thing sometimes
-			send(&packet);
-//		}
+			if(exec_command(&packet)) {
+				prepare_packet(packet.payload.code, &packet);
+				//TODO: If the packet will be not received there will be another request from source and this should be not a good thing sometimes
+				send(&packet);
+			}
 	} else {
 		switch (state) {
 			case RUN: {
-				for (uint8_t i = 0; i < NUMTIMEOUT; i++) {
-					if ((push_timeout[i].code) &&
-							(push_timeout[i].value) &&
-							((millis() - push_timeout[i].timer) > push_timeout[i].value)) {
-						prepare_packet(push_timeout[i].code, &packet);
-						if(exec_command(&packet) && enqueue(&packet)) {
-							push_timeout[i].timer = millis();
-						}
-					}
-				}
 				Item item;
 
-				while (dequeue(&item) and !Serial.available()) {
+				if(dequeue(&item)) {
 					if (!push(&item.packet) && item.retry++ <= MAX_RETRY) {
 						enqueue(&item);
+					}
+				} else {
+					for (uint8_t i = 0; i < NUMTIMEOUT; i++) {
+						if ((push_timeout[i].code) &&
+								(push_timeout[i].value) &&
+								((millis() - push_timeout[i].timer) > push_timeout[i].value)) {
+							prepare_packet(push_timeout[i].code, &packet);
+							if(exec_command(&packet) && enqueue(&packet)) {
+								push_timeout[i].timer = millis();
+							}
+						}
 					}
 				}
 				break;
@@ -273,26 +260,28 @@ uint8_t exec_command(Packet *packet) {
 			break;
 		}
 		case C_LIGHT: {
-			// Payload value are 0:off 1:on 2:unchange
-			for(uint8_t i=0; i < NUMLIGHT; i++)
-				if(packet->payload.data[i] == 1)
-					digitalWrite(LIGHT_BASE_PIN + i, HIGH);
-				else if(packet->payload.data[i] == 0)
-					digitalWrite(LIGHT_BASE_PIN + i, LOW);
+			// Payload value are 0:unchange 1:toggle
+			for(uint8_t i=0; i < NUMLIGHT; i++) {
+				lightbuff[i] = packet->payload.data[i] ^ lightbuff[i];
+				digitalWrite(LIGHT_BASE_PIN + i, lightbuff[i]);
+			}
+
+			memcpy(packet->payload.data, &lightbuff, sizeof(lightbuff));
 			break;
 		}
 		case C_SWITCH: {
 			uint8_t digin[NUMSWITCH];
+			uint8_t keypressed = 0;
 
 			memset(&digin, 0, sizeof(digin));
-			for(uint8_t i=0; i < NUMSWITCH; i++)
+			for(uint8_t i=0; i < NUMSWITCH; i++) {
 				digin[i] = digitalRead(SWITCH_BASE_PIN + i);
+				keypressed += digin[i];
+			}
 
-
-			if (!memcmp(&digin, &switchbuff, sizeof(switchbuff)))
+			if (!keypressed)
 				return 0;
 
-			memcpy(&switchbuff, &digin, sizeof(switchbuff));
 			memcpy(packet->payload.data, &digin, sizeof(digin));
 			break;
 		}
@@ -311,17 +300,6 @@ void start_bootloader() {
 }
 
 uint16_t get_id() {
-	/* READ NODE ID FROM FLASH */
-//	uint16_t address = 0x3ffe;
-//	uint8_t ch;
-//	uint16_t id;
-//
-//	__asm__ ("lpm %0,Z+\n" : "=r" (ch) , "=z" (address) : "1" (address));
-//	id = ch;
-//
-//	__asm__ ("lpm %0,Z+\n" : "=r" (ch) , "=z" (address) : "1" (address));
-//	id += 256 * ch;
-
 	return eeprom_read_word((uint16_t*)ID_EE_ADDRESS);
 }
 
@@ -392,85 +370,116 @@ uint8_t push(Packet *packet) {
 	unsigned long timeout;
 	uint8_t received;
 
-	send(packet);
-	timeout = millis();
-	while(!(received=receive(packet)) && ((millis() - timeout) < PACKET_TIMEOUT));
-	if(!received)
+	if(send(packet)) {
+		timeout = millis();
+		while(!(received=receive(packet)) && ((millis() - timeout) < PACKET_TIMEOUT));
+		if(!received)
+			return 0;
+	} else
 		return 0;
-//	while(!receive(packet) && (millis() - timeout) < PACKET_TIMEOUT);
-//	if(packet->dest != node_id) {
-//		delay(PACKET_TIMEOUT);
-//		flushinputbuffer();
-//		return 0;
-//	}
+
 	return 1;
 }
 
 uint8_t send(Packet* pkt) {
-	if(Serial.availableForWrite() < (int)sizeof(Packet)) {
-//		oled.print("Full buffer");
+	if((Serial.availableForWrite() < (int)sizeof(Packet)) || Serial.available())
 		return 0;
-	}
 
 	/*
 	 * There are 2 delay of 10 us approx a char at 19200
 	 * to wait for bus enable and disable to be sure for
 	 * a complete transmission
 	 */
-	uint16_t chksum = ModRTU_CRC((char*)pkt, sizeof(Packet));
-
 	digitalWrite(BUS_ENABLE, HIGH);          			// 485 write mode
-	delayMicroseconds(10);
+//	delayMicroseconds(10);
 	Serial.write(header, sizeof(header));
 	Serial.write((unsigned char *)pkt, sizeof(Packet));
+
+	uint16_t chksum = ModRTU_CRC((char*)pkt, sizeof(Packet));
+
 	Serial.write((char*)&chksum, 2);
 	Serial.flush();										// wait for complete transmission
-	delayMicroseconds(10);
+//	delayMicroseconds(10);
 	digitalWrite(BUS_ENABLE, LOW);						// 485 read mode
 	return 1;
 }
 
+char timeRead() {
+	unsigned long timeout;
+	int c;
+
+	timeout = millis();
+	do {
+		c = Serial.read();
+		if (c >= 0)
+			return c;
+	} while((millis() - timeout) < PACKET_TIMEOUT);
+
+	return -1;
+}
+
 uint8_t receive(Packet* packet) {
-//	char buff_header[2];
+	char c;
 
 	// Wait for Header
-//	Serial.setTimeout(PACKET_TIMEOUT);
-//	do {
-//		if (Serial.readBytes(buff_header, 2) < 2)
-//			return 0;
-//	} while(memcmp(header, buff_header, 2)!=0);
-	do {
-		if (Serial.available() < 3)
-			return 0;
-	} while(Serial.read() != header[0]);
-
-	if (Serial.read() != header[1])
+	if(!Serial.available())
 		return 0;
 
-	uint16_t size = Serial.read();
+	do {
+		c = timeRead();
+	} while (c >= 0 && c != header[0]);
+
+	if (c != header[0])
+		return 0;
+
+	do {
+		c = timeRead();
+	} while (c >= 0 && c == header[0]);
+
+	if (c != header[1])
+		return 0;
+
+//	uint8_t looking_for_header = 0;
+//
+//		// Wait for Header
+//		while(Serial.available()) {
+//			if (Serial.read() == header[0]) {
+//				looking_for_header = 1;
+//				break;
+//			}
+//		}
+//
+//		if (!looking_for_header)
+//			return 0;
+//
+//		unsigned long timeout;
+//
+//		timeout = millis();
+//		while((Serial.available() < 2) && ((millis() - timeout) < PACKET_TIMEOUT) );
+//
+//		if (Serial.available() < 2)
+//			return 0;
+//
+//		if (Serial.read() != header[1])
+//			return 0;
+
+	uint16_t size = timeRead();
 	char buffer[MAX_BUFFER_SIZE];
 
 	// Wait for packet
 	Serial.setTimeout(PACKET_TIMEOUT);
-	if ((size > sizeof(Packet)) || (Serial.readBytes(buffer, size) < size)) {
-//		flushinputbuffer();
+	if ((size > sizeof(Packet)) || (Serial.readBytes(buffer, size) < size))
 		return 0;
-	}
 
 	// Wait for CRC
 	uint16_t chksum;
 
-	if (Serial.readBytes((char *)&chksum, 2) < 2) {
-//		flushinputbuffer();
+	if (Serial.readBytes((char *)&chksum, 2) < 2)
 		return 0;
-	}
+
 	// Check CRC
-	if (chksum!=ModRTU_CRC(buffer, size)) {
-//		Serial.print("CRC Error=");
-//		Serial.print(chksum, HEX);
-//		flushinputbuffer();
+	if (chksum!=ModRTU_CRC(buffer, size))
 		return 0;
-	}
 
 	memcpy(packet, buffer, size);
 	if(packet->dest!=node_id)

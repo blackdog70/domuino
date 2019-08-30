@@ -158,13 +158,13 @@ int lux_state;
  */
 #define NUMSWITCH 3
 #define SWITCH_BASE_PIN 3 // Base pin, others will be Base+1, Base+2 and so on
-uint8_t switchbuff[NUMSWITCH];
 
 /*
  * LIGHT settings
  */
 #define NUMLIGHT 3
 #define LIGHT_BASE_PIN 6 // Base pin, others will be Base+1, Base+2 and so on
+uint8_t lightbuff[NUMLIGHT];
 
 
 uint16_t hub_node;
