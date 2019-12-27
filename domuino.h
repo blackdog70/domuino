@@ -14,7 +14,7 @@
 #include <FreeMemory.h>
 #include <EmonLib.h>
 #include <DHT.h>
-#include <SSD1306Ascii.h>
+//#include <SSD1306Ascii.h>
 //#include <SSD1306AsciiAvrI2c.h>
 #include <SSD1306AsciiWire.h>
 
@@ -34,37 +34,62 @@ const uint8_t* fonts[] = {
 /*
  * Communication settings
  */
-#define ID_EE_ADDRESS  0x198
-#define BAUDRATE 38400
-#define MAX_DATA_SIZE 12
+#define DATA_MAX_SIZE 12
+#define BROADCAST 255
+#define HEADER {0x08, 0x70}
 
 struct Payload {
     uint8_t code;
-    uint8_t data[MAX_DATA_SIZE];
+    uint8_t data[DATA_MAX_SIZE] = { 0 };
 };
 
 struct Packet {
+	uint8_t header[2] = HEADER;
 	uint16_t source;
 	uint16_t dest;
     Payload payload;
+    uint16_t crc;
 };
 
-const unsigned char header[3] = {0x08, 0x70, sizeof(Packet)};
-
-#define MAX_QUEUE_SIZE 6
-
 struct Item {
-	uint8_t retry;
+	unsigned long timeout;
 	Packet packet;
 };
 
-Item queue[MAX_QUEUE_SIZE];
+#define PACKET_SIZE sizeof(Packet) - 2
+#define QUEUE_MAX_SIZE 6
 
+Item queue[QUEUE_MAX_SIZE];
+int8_t queue_idx = -1;
+
+#define NET_BAUDRATE 38400
+#define _BYTE_DURATION_ 10000000 / NET_BAUDRATE // 8 bit + xon + xoff = 10 bit - express microseconds
+
+/*
+
+                  _MSG_DURATION_
+    	   +-------------------------+
+		   |    					 |
+0----------+    					 +----------END
+           !									!
+		   SLOT * _MSG_DURATION_                NET_MAX_NODES * _MSG_DURATION_
+
+*/
+
+#define SLOT_EE 0x197 // NET SLOT
+#define ID_EE_ADDRESS  0x198
+
+#define NET_MSG_SIZE (sizeof(Packet) + 5) // 5 = 2 bytes header, 1 byte size, 2 bytes CRC
+#define NET_MSG_DURATION (_BYTE_DURATION_ * NET_MSG_SIZE) / 1000 + 1 // Conversion to millis
+#define NET_SLOT NET_MSG_DURATION
+#define NET_MAX_NODES 32
 #define BUS_ENABLE 2
-#define PACKET_TIMEOUT 150UL 	// milliseconds
-#define NUM_PACKET 1
-#define MAX_BUFFER_SIZE (NUM_PACKET * (sizeof(Packet) + 5)) // 5 = 2 bytes header, 1 byte size, 2 bytes CRC
 #define MAX_RETRY 3
+#define NET_PACKET_TIMEOUT (unsigned long)50UL // (NET_MSG_DURATION) 	// milliseconds
+#define PACKET_QUERY 0
+#define PACKET_ANSWER 1
+#define PACKET_LIFETIME (unsigned long)900	// milliseconds
+#define PACKET_DELAY_TRANSACTION (unsigned long)5 //milliseconds
 
 /*
  * Commands settings
@@ -74,6 +99,7 @@ Item queue[MAX_QUEUE_SIZE];
 
 #define COMMAND_PATTERN  0x80
 // SYSTEM
+#define C_ACK			0x7e
 #define C_START 		0x80
 #define C_PING 			0x81
 #define C_PROGRAM 		0x82
@@ -86,15 +112,26 @@ Item queue[MAX_QUEUE_SIZE];
 #define C_LCDCLEAR		0x91
 #define C_LCDPRINT		0x92
 #define C_LCDWRITE		0x93
-#define C_HBT 			0x9f
+#define C_LCDINIT		0x94
+
 // DEVICE
+#define C_HBT 			0x9f
 #define C_DHT 			0xA0
 #define C_EMS 			0xA1
-#define C_BINARY_OUT 	0xA2
 #define C_SWITCH 		0xA3
+#define C_BINARY_OUT 	0xA2
 #define C_LIGHT 		0xA4
 #define C_PIR 			0xA5
 #define C_LUX 			0xA6
+
+uint8_t commands[] = {
+		C_HBT,
+		C_LUX,
+		C_PIR,
+		C_DHT,
+		C_EMS,
+		C_SWITCH
+};
 
 /*
  * Timing settings in milliseconds
@@ -107,18 +144,20 @@ struct Timeout {
 	Timeout():code(0), retry(0), timer(millis()), value(0) {};
 };
 
-#define DHT_TIMEOUT 2000UL
-#define EE_DHT 0x10
-#define SWITCH_TIMEOUT 1000UL
-#define EE_SWITCH 0x11
-#define PIR_TIMEOUT 5000UL
-#define EE_PIR 0x12
-#define LUX_TIMEOUT 10000UL
-#define EE_LUX 0x13
-#define EMS_TIMEOUT 10000UL
-#define EE_EMS 0x14
+// **** ATTENZIONE !! L'ORDINE DI DICHIARAZIONE DEVE ESSERE QUELLO DI COMMANDS ****
+#define EE_BASE 0x10
 #define HBT_TIMING 10000UL  // heartbeat
-#define EE_HBT 0x15
+#define EE_HBT EE_BASE
+#define LUX_TIMEOUT 10000UL
+#define EE_LUX EE_BASE+1
+#define PIR_TIMEOUT 5000UL
+#define EE_PIR EE_BASE+2
+#define DHT_TIMEOUT 2000UL
+#define EE_DHT EE_BASE+3
+#define EMS_TIMEOUT 10000UL
+#define EE_EMS EE_BASE+4
+#define SWITCH_TIMEOUT 1000UL
+#define EE_SWITCH EE_BASE+5
 
 /*
  * EMON settings
@@ -162,8 +201,8 @@ int lux_state;
 /*
  * LIGHT settings
  */
-#define NUMLIGHT 3
-#define LIGHT_BASE_PIN 6 // Base pin, others will be Base+1, Base+2 and so on
+#define NUMLIGHT 11
+#define LIGHT_BASE_PIN 3 // Base pin, others will be Base+1, Base+2 and so on
 uint8_t lightbuff[NUMLIGHT];
 
 
@@ -179,7 +218,7 @@ void set_id(uint16_t); // set address
 void showsplash();
 uint8_t refresh_sensor(uint8_t code);
 uint8_t exec_command(Packet *packet);
-void prepare_packet(uint8_t code, Packet *packet);
+void prepare_packet(uint8_t code, Packet *packet, uint8_t mode);
 void display_info();
 void start_bootloader();
 uint8_t enqueue(Item *item);

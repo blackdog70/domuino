@@ -8,7 +8,7 @@
 #include "domuino.h"
 #include "logo.h"
 
-Timeout push_timeout[6];
+Timeout push_timeout[sizeof(commands)];
 uint16_t node_id;
 char running = 0;
 
@@ -17,27 +17,11 @@ char running = 0;
 void setup()
 {
 	/* INIT BUS */
-	Serial.begin(BAUDRATE);
+	Serial.begin(NET_BAUDRATE);
+	Serial.setTimeout(NET_PACKET_TIMEOUT);
+
 	pinMode(BUS_ENABLE, OUTPUT);
 	hub_node = 1;	// Set to default hub
-
-	/* INIT LCD */
-	//oled.begin(&Adafruit128x64, I2C_ADDRESS, false);
-	oled.begin(&Adafruit128x64, I2C_ADDRESS);
-	oled.set400kHz();
-
-/*  PRIMA DI RIABILITARE LA VISUALIZZAZIONE DEL LOGO
- *  CONSIDERARE CHE E' STATO DISATTIVATO PER EVITARE PROBLEMI
- *  CON LA VISUALIZZAZIONE DELLE STRINGHE ALTE 3 BYTES
- *  I PROBLEMI ERANO DIVERSI AD OGNI PROGRAMMAZIONE A SEGUITO DI MODIFICHE AL CODICE
- *  APPARENTEMENTE INSIGNIFICANTI, ES AGGIUNGENDO O TOGLIENDO UN INCREMENTO DI UNA VARIABILE
- *  E NON SONO RIUSCITO A CAPIRE SE IL PROBLEMA E' DOVUTO AL SOFTWARE O ALLA FLASH DEL
- *  CHIP CHE PER QUALCHE MOTIVO NON SI PROGRAMMA CORRETTAMENTE (NON HO
- *  ESEGUITO IL VERIFY DEL DOWNLOAD), IN EFFETTI RESTANDO AL DI SOTTO DI UNA CERTA
- *  SIZE DEL CODICE IL PROBLEMA NON SI VERIFICA
- */
-	oled.clear();
-//	showsplash();
 
 	/* INIT IO PINS */
 	pinMode(DHT_PIN, INPUT);
@@ -50,7 +34,6 @@ void setup()
 		pinMode(LIGHT_BASE_PIN + i, OUTPUT);
 		digitalWrite(LIGHT_BASE_PIN + i, LOW);
 	}
-
 
 	/* INIT QUEUE */
 	memset(&queue, 0, sizeof(queue));
@@ -65,18 +48,10 @@ void setup()
 	 */
 	memset(&push_timeout, 0, sizeof(push_timeout));
 
-	push_timeout[0].code = C_HBT;
-	push_timeout[0].value = eeprom_read_byte((uint8_t*)EE_HBT) * 1000UL;
-	push_timeout[1].code = C_LUX;
-	push_timeout[1].value = eeprom_read_byte((uint8_t*)EE_LUX) * 1000UL;
-	push_timeout[2].code = C_PIR;
-	push_timeout[2].value = eeprom_read_byte((uint8_t*)EE_PIR) * 1000UL;
-	push_timeout[3].code = C_DHT;
-	push_timeout[3].value = eeprom_read_byte((uint8_t*)EE_DHT) * 1000UL;
-	push_timeout[4].code = C_EMS;
-	push_timeout[4].value = eeprom_read_byte((uint8_t*)EE_EMS) * 1000UL;
-	push_timeout[5].code = C_SWITCH;
-	push_timeout[5].value = eeprom_read_byte((uint8_t*)EE_SWITCH) * 1000UL;
+	for(uint8_t i=0; i<sizeof(commands); i++) {
+		push_timeout[i].code = commands[i];
+		push_timeout[i].value = eeprom_read_byte((uint8_t*)EE_BASE+i) * 1000UL;
+	}
 
 	/* READ NODE ID FROM FLASH */
 	node_id = get_id();
@@ -88,23 +63,15 @@ void loop()
 {
 	Packet packet;
 
-	if(receive(&packet)) {
-			/* Wait 10ms before reply to give time for transmission
-			 * direction change
-			 */
-			delay(10);
-			if(exec_command(&packet)) {
-				prepare_packet(packet.payload.code, &packet);
-				//TODO: If the packet will be not received there will be another request from source and this should be not a good thing sometimes
-				send(&packet);
-			}
-	} else {
+	if(receive(&packet) && exec_command(&packet))
+		send(&packet);
+	else {
 		switch (state) {
 			case RUN: {
 				Item item;
 
 				if(dequeue(&item)) {
-					if (!push(&item.packet) && item.retry++ <= MAX_RETRY) {
+					if (!push(&item.packet) && ((millis() - item.timeout) < PACKET_LIFETIME)) {
 						enqueue(&item);
 					}
 				} else {
@@ -112,7 +79,7 @@ void loop()
 						if ((push_timeout[i].code) &&
 								(push_timeout[i].value) &&
 								((millis() - push_timeout[i].timer) > push_timeout[i].value)) {
-							prepare_packet(push_timeout[i].code, &packet);
+							packet.payload.code = push_timeout[i].code;
 							if(exec_command(&packet) && enqueue(&packet)) {
 								push_timeout[i].timer = millis();
 							}
@@ -131,49 +98,16 @@ void loop()
 	}
 }
 
-void prepare_packet(uint8_t code, Packet *packet) {
+uint8_t exec_command(Packet *packet) {
 	packet->source = node_id;
 	packet->dest = hub_node;
-	packet->payload.code = code;
-	memset(packet->payload.data, 0, MAX_DATA_SIZE);
-}
 
-uint8_t exec_command(Packet *packet) {
 	switch(packet->payload.code) {
 		case C_CONFIG: {
-			switch(packet->payload.data[0]) {
-				case C_HBT: {
-					unsigned long timeout = (unsigned long)packet->payload.data[1];
-					if (timeout > 0) {
-						push_timeout[0].value = timeout * 1000UL;
-						eeprom_update_byte((uint8_t*)EE_HBT, packet->payload.data[1]);
-					}
-					break;
-				}
-				case C_LUX: {
-					push_timeout[1].value = (unsigned long)packet->payload.data[1] * 1000UL;
-					eeprom_update_byte((uint8_t*)EE_LUX, packet->payload.data[1]);
-					break;
-				}
-				case C_PIR: {
-					push_timeout[2].value = (unsigned long)packet->payload.data[1] * 1000UL;
-					eeprom_update_byte((uint8_t*)EE_PIR, packet->payload.data[1]);
-					break;
-				}
-				case C_DHT: {
-					push_timeout[3].value = (unsigned long)packet->payload.data[1] * 1000UL;
-					eeprom_update_byte((uint8_t*)EE_DHT, packet->payload.data[1]);
-					break;
-				}
-				case C_EMS: {
-					push_timeout[4].value = (unsigned long)packet->payload.data[1] * 1000UL;
-					eeprom_update_byte((uint8_t*)EE_EMS, packet->payload.data[1]);
-					break;
-				}
-				case C_SWITCH: {
-					push_timeout[5].value = (unsigned long)packet->payload.data[1] * 1000UL;
-					eeprom_update_byte((uint8_t*)EE_SWITCH, packet->payload.data[1]);
-					break;
+			for(uint8_t i=0; i< sizeof(commands); i++) {
+				if(commands[i] == packet->payload.data[0]) {
+					push_timeout[i].value = (unsigned long)packet->payload.data[1] * 1000UL;
+					eeprom_update_byte((uint8_t*)EE_BASE+i, packet->payload.data[1]);
 				}
 			}
 			break;
@@ -193,6 +127,25 @@ uint8_t exec_command(Packet *packet) {
 			for (uint8_t c = 0; c <= packet->payload.data[2] - 1; c++) {
 				oled.ssd1306WriteRamBuf(packet->payload.data[3 + c]);
 			}
+			break;
+		}
+		case C_LCDINIT: {
+			//oled.begin(&Adafruit128x64, I2C_ADDRESS, false);
+			oled.begin(&Adafruit128x64, I2C_ADDRESS);
+			oled.set400kHz();
+
+		/*  PRIMA DI RIABILITARE LA VISUALIZZAZIONE DEL LOGO
+		 *  CONSIDERARE CHE E' STATO DISATTIVATO PER EVITARE PROBLEMI
+		 *  CON LA VISUALIZZAZIONE DELLE STRINGHE ALTE 3 BYTES
+		 *  I PROBLEMI ERANO DIVERSI AD OGNI PROGRAMMAZIONE A SEGUITO DI MODIFICHE AL CODICE
+		 *  APPARENTEMENTE INSIGNIFICANTI, ES AGGIUNGENDO O TOGLIENDO UN INCREMENTO DI UNA VARIABILE
+		 *  E NON SONO RIUSCITO A CAPIRE SE IL PROBLEMA E' DOVUTO AL SOFTWARE O ALLA FLASH DEL
+		 *  CHIP CHE PER QUALCHE MOTIVO NON SI PROGRAMMA CORRETTAMENTE (NON HO
+		 *  ESEGUITO IL VERIFY DEL DOWNLOAD), IN EFFETTI RESTANDO AL DI SOTTO DI UNA CERTA
+		 *  SIZE DEL CODICE IL PROBLEMA NON SI VERIFICA
+		 */
+		//  oled.clear();
+		//	showsplash();
 			break;
 		}
 		case C_PROGRAM: {
@@ -288,6 +241,8 @@ uint8_t exec_command(Packet *packet) {
 		default:
 			return 0;
 	}
+
+	packet->crc = ModRTU_CRC((char*)packet, PACKET_SIZE); // avoid crc in calc
 	return 1;
 }
 
@@ -305,6 +260,7 @@ uint16_t get_id() {
 
 void set_id(uint16_t new_value) {
 	eeprom_update_word((uint16_t*)ID_EE_ADDRESS, new_value);
+	node_id = new_value;
 }
 
 void showsplash() {
@@ -329,21 +285,12 @@ void flushinputbuffer() {
 }
 
 uint8_t enqueue(Item *item) {
-	/* Do not enqueue if there is already a packet with the same code and dest */
-	for (uint8_t i=0; i<MAX_QUEUE_SIZE; i++) {
-		if (queue[i].packet.payload.code == item->packet.payload.code &&
-				queue[i].packet.dest == item->packet.dest) {
-			return 2;
-		}
+	if (queue_idx < QUEUE_MAX_SIZE - 2) { // -2 because I reserve a queue slot for instant reply
+		queue_idx++;
+		memcpy(&queue[queue_idx], item, sizeof(Item));
+		return 1;
 	}
 
-	/* Enqueue if there is space available */
-	for (uint8_t i=0; i<MAX_QUEUE_SIZE; i++) {
-		if (queue[i].packet.payload.code == 0) {
-			memcpy(&queue[i], item, sizeof(Item));
-			return 1;
-		}
-	}
 	return 0;
 }
 
@@ -351,18 +298,17 @@ uint8_t enqueue(Packet *packet) {
 	Item item;
 
 	memcpy(&item.packet, packet, sizeof(Packet));
+	item.timeout = millis();
 	return enqueue(&item);
 }
 
 uint8_t dequeue(Item *item) {
-	/* Enqueue if there is something */
-	for (uint8_t i=0; i<MAX_QUEUE_SIZE; i++) {
-		if (queue[i].packet.payload.code != 0) {
-			memcpy(item, &queue[i], sizeof(Item));
-			memset(&queue[i], 0, sizeof(Item));
-			return 1;
-		}
+	if (queue_idx >= 0) {
+		memcpy(item, &queue[queue_idx], sizeof(Item));
+		queue_idx--;
+		return 1;
 	}
+
 	return 0;
 }
 
@@ -372,117 +318,43 @@ uint8_t push(Packet *packet) {
 
 	if(send(packet)) {
 		timeout = millis();
-		while(!(received=receive(packet)) && ((millis() - timeout) < PACKET_TIMEOUT));
-		if(!received)
+		while(!(received=receive(packet)) && ((millis() - timeout) < NET_PACKET_TIMEOUT));
+		if(!received) {
+			delayMicroseconds(node_id * _BYTE_DURATION_ + _BYTE_DURATION_);
 			return 0;
+		}
 	} else
 		return 0;
 
 	return 1;
 }
 
-uint8_t send(Packet* pkt) {
+uint8_t send(Packet* packet) {
 	if((Serial.availableForWrite() < (int)sizeof(Packet)) || Serial.available())
 		return 0;
 
 	/*
-	 * There are 2 delay of 10 us approx a char at 19200
+	 * There are 2 delay
 	 * to wait for bus enable and disable to be sure for
 	 * a complete transmission
 	 */
 	digitalWrite(BUS_ENABLE, HIGH);          			// 485 write mode
-//	delayMicroseconds(10);
-	Serial.write(header, sizeof(header));
-	Serial.write((unsigned char *)pkt, sizeof(Packet));
+	delayMicroseconds(10);
 
-	uint16_t chksum = ModRTU_CRC((char*)pkt, sizeof(Packet));
-
-	Serial.write((char*)&chksum, 2);
+	Serial.write((unsigned char *)packet, sizeof(Packet));
 	Serial.flush();										// wait for complete transmission
-//	delayMicroseconds(10);
+
+	delayMicroseconds(10);
 	digitalWrite(BUS_ENABLE, LOW);						// 485 read mode
 	return 1;
 }
 
-char timeRead() {
-	unsigned long timeout;
-	int c;
-
-	timeout = millis();
-	do {
-		c = Serial.read();
-		if (c >= 0)
-			return c;
-	} while((millis() - timeout) < PACKET_TIMEOUT);
-
-	return -1;
-}
-
 uint8_t receive(Packet* packet) {
-	char c;
-
-	// Wait for Header
-	if(!Serial.available())
-		return 0;
-
-	do {
-		c = timeRead();
-	} while (c >= 0 && c != header[0]);
-
-	if (c != header[0])
-		return 0;
-
-	do {
-		c = timeRead();
-	} while (c >= 0 && c == header[0]);
-
-	if (c != header[1])
-		return 0;
-
-//	uint8_t looking_for_header = 0;
-//
-//		// Wait for Header
-//		while(Serial.available()) {
-//			if (Serial.read() == header[0]) {
-//				looking_for_header = 1;
-//				break;
-//			}
-//		}
-//
-//		if (!looking_for_header)
-//			return 0;
-//
-//		unsigned long timeout;
-//
-//		timeout = millis();
-//		while((Serial.available() < 2) && ((millis() - timeout) < PACKET_TIMEOUT) );
-//
-//		if (Serial.available() < 2)
-//			return 0;
-//
-//		if (Serial.read() != header[1])
-//			return 0;
-
-	uint16_t size = timeRead();
-	char buffer[MAX_BUFFER_SIZE];
-
-	// Wait for packet
-	Serial.setTimeout(PACKET_TIMEOUT);
-	if ((size > sizeof(Packet)) || (Serial.readBytes(buffer, size) < size))
-		return 0;
-
-	// Wait for CRC
-	uint16_t chksum;
-
-	if (Serial.readBytes((char *)&chksum, 2) < 2)
-		return 0;
-
-	// Check CRC
-	if (chksum!=ModRTU_CRC(buffer, size))
-		return 0;
-
-	memcpy(packet, buffer, size);
-	if(packet->dest!=node_id)
+	if(!Serial.find((char*)&packet->header, sizeof(packet->header)) or					// Wait for Header
+			(Serial.readBytes((char*)&packet->source, PACKET_SIZE) < PACKET_SIZE) or	// Wait for packet
+			(packet->dest!=node_id and packet->dest!=BROADCAST)	or						// Check destination
+			(packet->crc!=ModRTU_CRC((char*)packet, PACKET_SIZE)) 						// Check CRC
+	)
 		return 0;
 
 	return 1;
