@@ -8,8 +8,9 @@
 #include "domuino.h"
 #include "logo.h"
 
-Timeout push_timeout[sizeof(commands)];
+Timeout push_timeout[sizeof(commands)/sizeof(command_type)];
 uint16_t node_id;
+uint16_t version = 11;
 char running = 0;
 
 #define NUMTIMEOUT (sizeof(push_timeout) / sizeof(Timeout))
@@ -48,9 +49,36 @@ void setup()
 	 */
 	memset(&push_timeout, 0, sizeof(push_timeout));
 
-	for(uint8_t i=0; i<sizeof(commands); i++) {
-		push_timeout[i].code = commands[i];
-		push_timeout[i].value = eeprom_read_byte((uint8_t*)EE_BASE+i) * 1000UL;
+	for(uint8_t i=0; i<sizeof(commands)/sizeof(command_type); i++) {
+		if(commands[0].type == TIMER_COMMAND) {
+			push_timeout[i].code = commands[i].command;
+			push_timeout[i].value = eeprom_read_byte((uint8_t*)EE_BASE+i) * 1000UL;
+		}
+	}
+
+	// If is set then init LCD
+	if (eeprom_read_byte((uint8_t*)EE_LCD)) {
+		//oled.begin(&Adafruit128x64, I2C_ADDRESS, false);
+		oled.begin(&Adafruit128x64, I2C_ADDRESS);
+		//oled.set400kHz();
+
+	/*  PRIMA DI RIABILITARE LA VISUALIZZAZIONE DEL LOGO
+	 *  CONSIDERARE CHE E' STATO DISATTIVATO PER EVITARE PROBLEMI
+	 *  CON LA VISUALIZZAZIONE DELLE STRINGHE ALTE 3 BYTES
+	 *  I PROBLEMI ERANO DIVERSI AD OGNI PROGRAMMAZIONE A SEGUITO DI MODIFICHE AL CODICE
+	 *  APPARENTEMENTE INSIGNIFICANTI, ES AGGIUNGENDO O TOGLIENDO UN INCREMENTO DI UNA VARIABILE
+	 *  E NON SONO RIUSCITO A CAPIRE SE IL PROBLEMA E' DOVUTO AL SOFTWARE O ALLA FLASH DEL
+	 *  CHIP CHE PER QUALCHE MOTIVO NON SI PROGRAMMA CORRETTAMENTE (NON HO
+	 *  ESEGUITO IL VERIFY DEL DOWNLOAD), IN EFFETTI RESTANDO AL DI SOTTO DI UNA CERTA
+	 *  SIZE DEL CODICE IL PROBLEMA NON SI VERIFICA
+	 */
+	    oled.clear();
+		//showsplash();
+	    oled.setFont(fonts[0]);
+		oled.setCursor(25, 3);
+		oled.print("Initializing...");
+		delay(2000);
+	    oled.clear();
 	}
 
 	/* READ NODE ID FROM FLASH */
@@ -63,9 +91,12 @@ void loop()
 {
 	Packet packet;
 
-	if(receive(&packet) && exec_command(&packet))
+	if(receive(&packet) && exec_command(&packet)) {
 		send(&packet);
-	else {
+		// If the last was a config command then restart to apply the new settings
+		if (packet.payload.code == C_CONFIG)
+			RESET();
+	} else {
 		switch (state) {
 			case RUN: {
 				Item item;
@@ -104,11 +135,9 @@ uint8_t exec_command(Packet *packet) {
 
 	switch(packet->payload.code) {
 		case C_CONFIG: {
-			for(uint8_t i=0; i< sizeof(commands); i++) {
-				if(commands[i] == packet->payload.data[0]) {
-					push_timeout[i].value = (unsigned long)packet->payload.data[1] * 1000UL;
+			for(uint8_t i=0; i< sizeof(commands)/sizeof(command_type); i++) {
+				if(packet->payload.data[0] == commands[i].command)
 					eeprom_update_byte((uint8_t*)EE_BASE+i, packet->payload.data[1]);
-				}
 			}
 			break;
 		}
@@ -127,25 +156,6 @@ uint8_t exec_command(Packet *packet) {
 			for (uint8_t c = 0; c <= packet->payload.data[2] - 1; c++) {
 				oled.ssd1306WriteRamBuf(packet->payload.data[3 + c]);
 			}
-			break;
-		}
-		case C_LCDINIT: {
-			//oled.begin(&Adafruit128x64, I2C_ADDRESS, false);
-			oled.begin(&Adafruit128x64, I2C_ADDRESS);
-			oled.set400kHz();
-
-		/*  PRIMA DI RIABILITARE LA VISUALIZZAZIONE DEL LOGO
-		 *  CONSIDERARE CHE E' STATO DISATTIVATO PER EVITARE PROBLEMI
-		 *  CON LA VISUALIZZAZIONE DELLE STRINGHE ALTE 3 BYTES
-		 *  I PROBLEMI ERANO DIVERSI AD OGNI PROGRAMMAZIONE A SEGUITO DI MODIFICHE AL CODICE
-		 *  APPARENTEMENTE INSIGNIFICANTI, ES AGGIUNGENDO O TOGLIENDO UN INCREMENTO DI UNA VARIABILE
-		 *  E NON SONO RIUSCITO A CAPIRE SE IL PROBLEMA E' DOVUTO AL SOFTWARE O ALLA FLASH DEL
-		 *  CHIP CHE PER QUALCHE MOTIVO NON SI PROGRAMMA CORRETTAMENTE (NON HO
-		 *  ESEGUITO IL VERIFY DEL DOWNLOAD), IN EFFETTI RESTANDO AL DI SOTTO DI UNA CERTA
-		 *  SIZE DEL CODICE IL PROBLEMA NON SI VERIFICA
-		 */
-		//  oled.clear();
-		//	showsplash();
 			break;
 		}
 		case C_PROGRAM: {
@@ -236,6 +246,10 @@ uint8_t exec_command(Packet *packet) {
 				return 0;
 
 			memcpy(packet->payload.data, &digin, sizeof(digin));
+			break;
+		}
+		case C_VERSION: {
+			memcpy(packet->payload.data, &version, sizeof(int));
 			break;
 		}
 		default:

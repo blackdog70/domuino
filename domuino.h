@@ -14,20 +14,21 @@
 #include <FreeMemory.h>
 #include <EmonLib.h>
 #include <DHT.h>
-//#include <SSD1306Ascii.h>
-//#include <SSD1306AsciiAvrI2c.h>
-#include <SSD1306AsciiWire.h>
+#include <SSD1306Ascii.h>
+#include <SSD1306AsciiAvrI2c.h>
+//#include <SSD1306AsciiWire.h>
+
 
 
 /*
  * LCD settings
  */
 #define I2C_ADDRESS 0x3C
-//SSD1306AsciiAvrI2c oled;
-SSD1306AsciiWire oled;
+SSD1306AsciiAvrI2c oled;
+//SSD1306AsciiWire oled;
 
 const uint8_t* fonts[] = {
-		font5x7,
+		System5x7,
 		lcdnums14x24
 };
 
@@ -112,7 +113,7 @@ int8_t queue_idx = -1;
 #define C_LCDCLEAR		0x91
 #define C_LCDPRINT		0x92
 #define C_LCDWRITE		0x93
-#define C_LCDINIT		0x94
+#define C_VERSION		0x94
 
 // DEVICE
 #define C_HBT 			0x9f
@@ -123,14 +124,24 @@ int8_t queue_idx = -1;
 #define C_LIGHT 		0xA4
 #define C_PIR 			0xA5
 #define C_LUX 			0xA6
+#define C_LCD 			0xA7
 
-uint8_t commands[] = {
-		C_HBT,
-		C_LUX,
-		C_PIR,
-		C_DHT,
-		C_EMS,
-		C_SWITCH
+struct command_type {
+	uint8_t command;
+	uint8_t type;
+};
+
+#define TIMER_COMMAND 0
+#define ONOFF_COMMAND 1
+
+command_type commands[] = {
+	{C_HBT, TIMER_COMMAND},
+	{C_LUX, TIMER_COMMAND},
+	{C_PIR, TIMER_COMMAND},
+	{C_DHT, TIMER_COMMAND},
+	{C_EMS, TIMER_COMMAND},
+	{C_SWITCH, TIMER_COMMAND},
+	{C_LCD, ONOFF_COMMAND}
 };
 
 /*
@@ -158,6 +169,7 @@ struct Timeout {
 #define EE_EMS EE_BASE+4
 #define SWITCH_TIMEOUT 1000UL
 #define EE_SWITCH EE_BASE+5
+#define EE_LCD EE_BASE+6
 
 /*
  * EMON settings
@@ -212,6 +224,7 @@ uint16_t hub_node;
 #define PROGRAM 2
 #define STANDBY 3
 
+void(* RESET)(void) = 0; //Dichiarazione di funzione che punta all'indirizzo zero
 uint8_t state;
 uint16_t get_id(); // get address
 void set_id(uint16_t); // set address
