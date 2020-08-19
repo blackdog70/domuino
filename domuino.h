@@ -132,7 +132,8 @@ struct command_type {
 };
 
 #define TIMER_COMMAND 0
-#define ONOFF_COMMAND 1
+#define TRIGGER_COMMAND 1
+#define ONOFF_COMMAND 2
 
 command_type commands[] = {
 	{C_HBT, TIMER_COMMAND},
@@ -140,7 +141,8 @@ command_type commands[] = {
 	{C_PIR, TIMER_COMMAND},
 	{C_DHT, TIMER_COMMAND},
 	{C_EMS, TIMER_COMMAND},
-	{C_SWITCH, TIMER_COMMAND},
+	{C_SWITCH, TRIGGER_COMMAND},
+	{C_LIGHT, ONOFF_COMMAND},
 	{C_LCD, ONOFF_COMMAND}
 };
 
@@ -170,6 +172,7 @@ struct Timeout {
 #define SWITCH_TIMEOUT 1000UL
 #define EE_SWITCH EE_BASE+5
 #define EE_LCD EE_BASE+6
+#define EE_LIGHT EE_BASE+7
 
 /*
  * EMON settings
@@ -207,15 +210,13 @@ int lux_state;
 /*
  * TOUCH settings
  */
-#define NUMSWITCH 3
 #define SWITCH_BASE_PIN 3 // Base pin, others will be Base+1, Base+2 and so on
 
 /*
  * LIGHT settings
  */
-#define NUMLIGHT 11
-#define LIGHT_BASE_PIN 3 // Base pin, others will be Base+1, Base+2 and so on
-uint8_t lightbuff[NUMLIGHT];
+#define MAXLIGHT 11
+uint8_t lightbuff[MAXLIGHT];
 
 
 uint16_t hub_node;

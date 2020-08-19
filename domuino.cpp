@@ -12,6 +12,8 @@ Timeout push_timeout[sizeof(commands)/sizeof(command_type)];
 uint16_t node_id;
 uint16_t version = 11;
 char running = 0;
+char numswitch = 0;
+char numlight = 0;
 
 #define NUMTIMEOUT (sizeof(push_timeout) / sizeof(Timeout))
 
@@ -29,11 +31,13 @@ void setup()
 	pinMode(PIR_IN, INPUT);
 	pinMode(LUX_IN, INPUT);
 	dht_sensor.setup(DHT_PIN);
-	for(uint8_t i=0; i<NUMSWITCH; i++)
+	numswitch = eeprom_read_byte((uint8_t*)EE_SWITCH);
+	numlight =  eeprom_read_byte((uint8_t*)EE_LIGHT);
+	for(uint8_t i=0; i<numswitch; i++)
 		pinMode(SWITCH_BASE_PIN + i, INPUT);
-	for(uint8_t i=0; i<NUMLIGHT; i++) {
-		pinMode(LIGHT_BASE_PIN + i, OUTPUT);
-		digitalWrite(LIGHT_BASE_PIN + i, LOW);
+	for(uint8_t i=0; i<numlight; i++) {
+		pinMode(SWITCH_BASE_PIN + numswitch + i, OUTPUT);
+		digitalWrite(SWITCH_BASE_PIN + numswitch + i, LOW);
 	}
 
 	/* INIT QUEUE */
@@ -50,9 +54,17 @@ void setup()
 	memset(&push_timeout, 0, sizeof(push_timeout));
 
 	for(uint8_t i=0; i<sizeof(commands)/sizeof(command_type); i++) {
-		if(commands[0].type == TIMER_COMMAND) {
-			push_timeout[i].code = commands[i].command;
-			push_timeout[i].value = eeprom_read_byte((uint8_t*)EE_BASE+i) * 1000UL;
+		switch(commands[0].type) {
+			case TIMER_COMMAND: {
+				push_timeout[i].code = commands[i].command;
+				push_timeout[i].value = eeprom_read_byte((uint8_t*)EE_BASE+i) * 1000UL;
+				break;
+			}
+			case TRIGGER_COMMAND: {
+				push_timeout[i].code = commands[i].command;
+				push_timeout[i].value = SWITCH_TIMEOUT;
+				break;
+			}
 		}
 	}
 
@@ -224,20 +236,20 @@ uint8_t exec_command(Packet *packet) {
 		}
 		case C_LIGHT: {
 			// Payload value are 0:unchange 1:toggle
-			for(uint8_t i=0; i < NUMLIGHT; i++) {
+			for(uint8_t i=0; i < numlight; i++) {
 				lightbuff[i] = packet->payload.data[i] ^ lightbuff[i];
-				digitalWrite(LIGHT_BASE_PIN + i, lightbuff[i]);
+				digitalWrite(SWITCH_BASE_PIN + numswitch + i, lightbuff[i]);
 			}
 
 			memcpy(packet->payload.data, &lightbuff, sizeof(lightbuff));
 			break;
 		}
 		case C_SWITCH: {
-			uint8_t digin[NUMSWITCH];
+			uint8_t digin[numswitch];
 			uint8_t keypressed = 0;
 
 			memset(&digin, 0, sizeof(digin));
-			for(uint8_t i=0; i < NUMSWITCH; i++) {
+			for(uint8_t i=0; i < numswitch; i++) {
 				digin[i] = digitalRead(SWITCH_BASE_PIN + i);
 				keypressed += digin[i];
 			}
