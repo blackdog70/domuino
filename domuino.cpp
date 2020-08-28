@@ -12,8 +12,9 @@ Timeout push_timeout[sizeof(commands)/sizeof(command_type)];
 uint16_t node_id;
 uint16_t version = 11;
 char running = 0;
-char numswitch = 0;
-char numlight = 0;
+char numswitches = 0;
+char numlights = 0;
+char numouts = 0;
 
 #define NUMTIMEOUT (sizeof(push_timeout) / sizeof(Timeout))
 
@@ -32,13 +33,14 @@ void setup()
 	pinMode(LUX_IN, INPUT);
 	dht_sensor.setup(DHT_PIN);
 	eeprom_init();
-	numswitch = eeprom_read_byte((uint8_t*)EE_SWITCH);
-	numlight =  eeprom_read_byte((uint8_t*)EE_LIGHT);
-	for(uint8_t i=0; i<numswitch; i++)
-		pinMode(SWITCH_BASE_PIN + i, INPUT);
-	for(uint8_t i=0; i<numlight; i++) {
-		pinMode(SWITCH_BASE_PIN + numswitch + i, OUTPUT);
-		digitalWrite(SWITCH_BASE_PIN + numswitch + i, LOW);
+	numswitches = eeprom_read_byte((uint8_t*)EE_SWITCH);
+	numlights =  eeprom_read_byte((uint8_t*)EE_LIGHT);
+	numouts =  eeprom_read_byte((uint8_t*)EE_BINARY_OUT);
+	for(uint8_t i=0; i<numswitches; i++)
+		pinMode(IO_BASE_PIN + i, INPUT);
+	for(uint8_t i=0; i<numlights + numouts; i++) {
+		pinMode(IO_BASE_PIN + numswitches + i, OUTPUT);
+		digitalWrite(IO_BASE_PIN + numswitches + i, LOW);
 	}
 
 	/* INIT QUEUE */
@@ -237,21 +239,31 @@ uint8_t exec_command(Packet *packet) {
 		}
 		case C_LIGHT: {
 			// Payload value are 0:unchange 1:toggle
-			for(uint8_t i=0; i < numlight; i++) {
-				lightbuff[i] = packet->payload.data[i] ^ lightbuff[i];
-				digitalWrite(SWITCH_BASE_PIN + numswitch + i, lightbuff[i]);
+			for(uint8_t i=0; i < numlights; i++) {
+				lightsbuff[i] = packet->payload.data[i] ^ lightsbuff[i];
+				digitalWrite(IO_BASE_PIN + numswitches + i, lightsbuff[i]);
 			}
 
-			memcpy(packet->payload.data, &lightbuff, sizeof(lightbuff));
+			memcpy(packet->payload.data, &outsbuff, sizeof(lightsbuff));
+			break;
+		}
+		case C_BINARY_OUT: {
+			// Payload value are 0:off 1:on
+			for(uint8_t i=0; i < numouts; i++) {
+				outsbuff[i] = packet->payload.data[i];
+				digitalWrite(IO_BASE_PIN + numswitches + numlights + i, outsbuff[i]);
+			}
+
+			memcpy(packet->payload.data, &outsbuff, sizeof(outsbuff));
 			break;
 		}
 		case C_SWITCH: {
-			uint8_t digin[numswitch];
+			uint8_t digin[numswitches];
 			uint8_t keypressed = 0;
 
 			memset(&digin, 0, sizeof(digin));
-			for(uint8_t i=0; i < numswitch; i++) {
-				digin[i] = digitalRead(SWITCH_BASE_PIN + i);
+			for(uint8_t i=0; i < numswitches; i++) {
+				digin[i] = digitalRead(IO_BASE_PIN + i);
 				keypressed += digin[i];
 			}
 
