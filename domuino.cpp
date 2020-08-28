@@ -31,6 +31,7 @@ void setup()
 	pinMode(PIR_IN, INPUT);
 	pinMode(LUX_IN, INPUT);
 	dht_sensor.setup(DHT_PIN);
+	eeprom_init();
 	numswitch = eeprom_read_byte((uint8_t*)EE_SWITCH);
 	numlight =  eeprom_read_byte((uint8_t*)EE_LIGHT);
 	for(uint8_t i=0; i<numswitch; i++)
@@ -54,7 +55,7 @@ void setup()
 	memset(&push_timeout, 0, sizeof(push_timeout));
 
 	for(uint8_t i=0; i<sizeof(commands)/sizeof(command_type); i++) {
-		switch(commands[0].type) {
+		switch(commands[i].type) {
 			case TIMER_COMMAND: {
 				push_timeout[i].code = commands[i].command;
 				push_timeout[i].value = eeprom_read_byte((uint8_t*)EE_BASE+i) * 1000UL;
@@ -62,7 +63,7 @@ void setup()
 			}
 			case TRIGGER_COMMAND: {
 				push_timeout[i].code = commands[i].command;
-				push_timeout[i].value = SWITCH_TIMEOUT;
+				push_timeout[i].value = TRIGGER_TIMEOUT;
 				break;
 			}
 		}
@@ -278,6 +279,18 @@ void start_bootloader() {
 	cli();
 	noInterrupts();
 	asm volatile ("ijmp" ::"z" (0x3e00));
+}
+
+/*
+ * Init EEPROM first time start to 0
+ */
+void eeprom_init() {
+	if(eeprom_read_byte((uint8_t*)EE_INIT)==0xFF) {
+		for(uint8_t i=0; i< sizeof(commands)/sizeof(command_type); i++) {
+			eeprom_update_byte((uint8_t*)EE_BASE+i, 0);
+		}
+		eeprom_update_byte((uint8_t*)EE_INIT, 0);
+	}
 }
 
 uint16_t get_id() {

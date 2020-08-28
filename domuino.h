@@ -135,6 +135,11 @@ struct command_type {
 #define TRIGGER_COMMAND 1
 #define ONOFF_COMMAND 2
 
+/*
+ * La posizione nella lista qui sotto deve diventare indipendente
+ * Ora se inverto una delle righe i valori di config inviati via rete
+ * vanno nel parametro sbagliato
+ */
 command_type commands[] = {
 	{C_HBT, TIMER_COMMAND},
 	{C_LUX, TIMER_COMMAND},
@@ -142,8 +147,8 @@ command_type commands[] = {
 	{C_DHT, TIMER_COMMAND},
 	{C_EMS, TIMER_COMMAND},
 	{C_SWITCH, TRIGGER_COMMAND},
-	{C_LIGHT, ONOFF_COMMAND},
-	{C_LCD, ONOFF_COMMAND}
+	{C_LCD, ONOFF_COMMAND},
+	{C_LIGHT, ONOFF_COMMAND}
 };
 
 /*
@@ -158,6 +163,7 @@ struct Timeout {
 };
 
 // **** ATTENZIONE !! L'ORDINE DI DICHIARAZIONE DEVE ESSERE QUELLO DI COMMANDS ****
+#define EE_INIT 0x0F
 #define EE_BASE 0x10
 #define HBT_TIMING 10000UL  // heartbeat
 #define EE_HBT EE_BASE
@@ -169,7 +175,7 @@ struct Timeout {
 #define EE_DHT EE_BASE+3
 #define EMS_TIMEOUT 10000UL
 #define EE_EMS EE_BASE+4
-#define SWITCH_TIMEOUT 1000UL
+#define TRIGGER_TIMEOUT 1000UL
 #define EE_SWITCH EE_BASE+5
 #define EE_LCD EE_BASE+6
 #define EE_LIGHT EE_BASE+7
@@ -242,5 +248,6 @@ uint8_t push(Packet *packet);
 void flushinputbuffer();
 uint8_t receive(Packet* packet);
 uint8_t send(Packet* pkt);
+void eeprom_init();
 
 #endif /* DOMUINO_H_ */
