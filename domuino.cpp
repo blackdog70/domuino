@@ -237,20 +237,33 @@ uint8_t exec_command(Packet *packet) {
 			memcpy(packet->payload.data, &ems_state, sizeof(Payload_ems));
 			break;
 		}
-		case C_LIGHT: {
-			// Payload value are 0:unchange 1:toggle
-			for(uint8_t i=0; i < numlights; i++) {
-				lightsbuff[i] = packet->payload.data[i] ^ lightsbuff[i];
-				digitalWrite(IO_BASE_PIN + numswitches + i, lightsbuff[i]);
-			}
-
-			memcpy(packet->payload.data, &outsbuff, sizeof(lightsbuff));
-			break;
-		}
+		/*
+		 * LIGHT IS OBSOLETE
+		 */
+//		case C_LIGHT: {
+//			// Payload value are 0:unchange 1:toggle
+//			for(uint8_t i=0; i < numlights; i++) {
+//				lightsbuff[i] = packet->payload.data[i] ^ lightsbuff[i];
+//				digitalWrite(IO_BASE_PIN + numswitches + i, lightsbuff[i]);
+//			}
+//
+//			memcpy(packet->payload.data, &outsbuff, sizeof(lightsbuff));
+//			break;
+//		}
 		case C_BINARY_OUT: {
-			// Payload value are 0:off 1:on
+			// Payload value are 0:unchange 1:off 2:on 3:toggle
 			for(uint8_t i=0; i < numouts; i++) {
-				outsbuff[i] = packet->payload.data[i];
+				switch (packet->payload.data[i]) {
+					case 1:
+					case 2: {
+						outsbuff[i] = packet->payload.data[i] - 1;
+						break;
+					}
+					case 3: {
+						outsbuff[i] = 1 - outsbuff[i];
+						break;
+					}
+				}
 				digitalWrite(IO_BASE_PIN + numswitches + numlights + i, outsbuff[i]);
 			}
 
